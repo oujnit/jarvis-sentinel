@@ -182,6 +182,24 @@ WMO = [
 ]
 
 
+def weather_city(lat, lon):
+    """城市名：环境变量优先 → 反向地理编码自动识别 → 默认深圳。"""
+    city = os.environ.get("JARVIS_CITY", "").strip()
+    if city:
+        return city.rstrip("市")
+    try:
+        d = open_json(
+            "https://api.bigdatacloud.net/data/reverse-geocode-client"
+            "?latitude=" + lat + "&longitude=" + lon + "&localityLanguage=zh",
+            timeout=8)
+        name = d.get("city") or d.get("locality") or ""
+        if name:
+            return str(name).rstrip("市")
+    except Exception:
+        pass
+    return "深圳"
+
+
 def fetch_weather():
     lat = os.environ.get("JARVIS_LAT", "22.5455")    # 默认深圳（参考 kindle 项目）
     lon = os.environ.get("JARVIS_LON", "114.0683")
@@ -197,7 +215,8 @@ def fetch_weather():
             if code in codes:
                 text = txt
                 break
-        return {"ok": True, "temp": cur.get("temperature_2m"),
+        return {"ok": True, "city": weather_city(lat, lon),
+                "temp": cur.get("temperature_2m"),
                 "feels": cur.get("apparent_temperature"),
                 "humidity": cur.get("relative_humidity_2m"), "text": text}
     except Exception as e:

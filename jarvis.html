@@ -1043,7 +1043,9 @@ setInterval(() => {
   sysB("sys-mem", sp.mem && sp.mem.total_gb ? `${sp.mem.used_gb}/${sp.mem.total_gb}G` : "—");
   sysB("sys-disk", sp.disk && sp.disk.total_gb ? `${sp.disk.free_gb}/${sp.disk.total_gb}G` : "—");
   const wx = R.weather || {};
-  sysB("clock-wx", wx.ok ? `${Math.round(wx.temp)}° ${wx.text}` : "—");
+  sysB("clock-wx", wx.ok
+    ? [wx.city, Math.round(wx.temp) + "°", wx.text].filter(Boolean).join(" ")
+    : "—");
   const rs = R.resets || {};
   if (rs.ok && rs.last) {
     const days = (Date.now() - Date.parse(rs.last)) / 86400e3;
