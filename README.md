@@ -23,7 +23,7 @@ jarvis/
   - 本机系统：电池电量/充电状态、CPU 负载、内存、磁盘（`pmset`/`vm_stat`/`os.getloadavg`）
   - **Codex 额度重置**：最近一次重置时间、重置次数、平均间隔（codex-resets.com 公共 API，免密钥）
   - **天气**：实时温度与天气描述（Open-Meteo，免密钥；默认深圳，可用 `JARVIS_LAT`/`JARVIS_LON` 改）
-  - **DeepSeek / GLM 余额与额度窗口进度条**：GLM 每个额度窗口显示已用百分比进度条（≥70% 金色、≥90% 红色报警）、剩余额度与重置倒计时；Codex（调本机 `codex app-server`）的额度窗口同样尝试采集，未配置则省略。凭证自动读本机（见下文）
+  - **DeepSeek / GLM / Codex 余额与额度窗口进度条**：GLM（智谱 API）与 Codex（本机 `codex app-server`，initialize 需带 clientInfo）各返回 5小时/周 两个窗口，显示已用百分比进度条（≥70% 金色、≥90% 红色报警）与重置倒计时；凭证自动读本机（见下文）
 - 🚀 **J.A.R.V.I.S. 开机自检动画** + 全屏扫描线特效
 - 🔒 **纯本地**：检测数据仅在本机 127.0.0.1 上流转，不向任何外部发送（除免密钥的公共天气/重置接口外）
 

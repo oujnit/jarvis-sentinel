@@ -11,6 +11,7 @@ JARVIS Sentinel — 本地 AI 编码代理活动哨兵
 import json
 import os
 import re
+import select
 import shutil
 import ssl
 import subprocess
@@ -311,8 +312,28 @@ CODEX_BINS = (
 )
 
 
+def _dur_name(mins):
+    """窗口时长 → 中文名（参考项目 durationName 的约定）"""
+    try:
+        m = int(mins or 0)
+    except (TypeError, ValueError):
+        return ""
+    if m == 300:
+        return "5小时"
+    if m == 10080:
+        return "周"
+    if m > 0 and m % 10080 == 0:
+        return f"{m // 10080}周"
+    if m > 0 and m % 1440 == 0:
+        return f"{m // 1440}天"
+    if m > 0 and m % 60 == 0:
+        return f"{m // 60}小时"
+    return ""
+
+
 def fetch_codex_rate():
-    """Codex 额度窗口：spawn 本机 codex app-server 查询 account/rateLimits/read"""
+    """Codex 额度窗口：spawn 本机 codex app-server 查询 account/rateLimits/read。
+    initialize 必须带 clientInfo（桌面版内置 codex 会校验），否则无响应。"""
     exe = next((p for p in CODEX_BINS if p and os.path.isfile(p)), None)
     if not exe:
         return {"ok": False, "error": "NO BIN"}
@@ -322,16 +343,23 @@ def fetch_codex_rate():
                                 stderr=subprocess.DEVNULL, text=True)
     except Exception as e:
         return {"ok": False, "error": str(e)[:80]}
-    result = {}
+    result, init_err = None, None
     try:
 
         def send(obj):
             proc.stdin.write(json.dumps(obj) + "\n")
             proc.stdin.flush()
 
-        send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "clientInfo": {"name": "jarvis-sentinel", "title": "JARVIS Sentinel",
+                           "version": "1.0"},
+            "capabilities": None,
+        }})
         deadline = time.time() + 18
-        while time.time() < deadline and result is None:
+        while time.time() < deadline:
+            r, _, _ = select.select([proc.stdout], [], [], 1.0)
+            if not r:
+                continue
             line = proc.stdout.readline()
             if not line:
                 break
@@ -339,33 +367,48 @@ def fetch_codex_rate():
                 msg = json.loads(line)
             except ValueError:
                 continue
-            if msg.get("id") == 1 and not msg.get("error"):
+            if msg.get("id") == 1:
+                if msg.get("error"):
+                    init_err = str(msg["error"])[:80]
+                    break
                 send({"method": "initialized", "params": {}})
                 send({"jsonrpc": "2.0", "id": 2,
                       "method": "account/rateLimits/read", "params": None})
             elif msg.get("id") == 2:
-                result = msg.get("result")
                 if msg.get("error"):
-                    return {"ok": False, "error": str(msg["error"])[:80]}
+                    init_err = str(msg["error"])[:80]
+                else:
+                    result = msg.get("result")
+                break
     except Exception as e:
-        return {"ok": False, "error": str(e)[:80]}
+        init_err = init_err or str(e)[:80]
     finally:
         try:
             proc.kill()
         except OSError:
             pass
+    if init_err:
+        return {"ok": False, "error": init_err}
     if not isinstance(result, dict):
-        return {"ok": False, "error": "bad response"}
-    raw = result.get("rateLimits") or result.get("windows") or []
+        return {"ok": False, "error": "no response"}
+    # 兼容两种结构：rateLimits 直接给出，或 rateLimitsByLimitId 字典
+    bucket = result.get("rateLimits")
+    if not bucket and isinstance(result.get("rateLimitsByLimitId"), dict):
+        by_id = result["rateLimitsByLimitId"]
+        bucket = by_id.get("codex") or next(iter(by_id.values()), None)
+    if not isinstance(bucket, dict):
+        return {"ok": False, "error": "empty"}
     wins = []
-    for item in raw:
+    for key, fallback in (("primary", "5小时"), ("secondary", "周")):
+        item = bucket.get(key)
+        if not item:
+            continue
         pct = _pct(item.get("usedPercent"))
         if pct is None:
             continue
-        mins = item.get("windowDurationMins") or 0
-        name = f"{int(mins / 60)}h" if mins else ""
-        resets = item.get("resetsAt")
-        wins.append({"name": name, "usedPct": pct,
+        resets = item.get("resetsAt") or 0
+        wins.append({"name": _dur_name(item.get("windowDurationMins")) or fallback,
+                     "usedPct": pct,
                      "resetAt": int(float(resets) * 1000) if resets else 0})
     if not wins:
         return {"ok": False, "error": "empty"}
