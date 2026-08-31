@@ -281,28 +281,153 @@ def fetch_glm():
                   if x.get("type") == "CREDIT_LIMIT"]
         limits.sort(key=lambda p: p[0])
         wins = [{"usedPct": int(item.get("percentage") or 0),
-                 "resetAt": int(item.get("nextResetTime") or 0)}
+                 "resetAt": int(item.get("nextResetTime") or 0),
+                 "remaining": item.get("remaining")}
                 for _, item in limits[:3]]
         return {"ok": True, "windows": wins}
     except Exception as e:
         return {"ok": False, "error": str(e)[:80]}
 
 
+def _pct(used):
+    """0~1 一律放大为 0~100（参考项目 clampPct 的行为）"""
+    try:
+        v = float(used)
+    except (TypeError, ValueError):
+        return None
+    if v <= 1:
+        v *= 100
+    return int(round(v))
+
+
+def fetch_claude():
+    """Claude Code 用量窗口：~/.claude/.credentials.json 的 accessToken（参考项目同源）"""
+    try:
+        creds = json.loads((HOME / ".claude" / ".credentials.json").read_text())
+        token = str(((creds.get("claudeAiOauth") or {}).get("accessToken") or "")).strip()
+    except (OSError, ValueError):
+        token = ""
+    if not token:
+        return {"ok": False, "error": "NO KEY"}
+    try:
+        d = open_json("https://api.anthropic.com/api/oauth/usage",
+                      headers={"Authorization": "Bearer " + token,
+                               "anthropic-beta": "oauth-2025-04-20"}, timeout=10)
+        raw = d.get("rate_limits") if isinstance(d, dict) else None
+        if raw is None and isinstance(d, list):
+            raw = d
+        raw = raw or []
+        wins = []
+        for item in raw:
+            used = item.get("utilization") if item.get("utilization") is not None \
+                else item.get("utilization_pct")
+            pct = _pct(used)
+            if pct is None:
+                continue
+            resets = item.get("resets_at") or item.get("reset_at") or 0
+            wins.append({"usedPct": pct,
+                         "resetAt": int(resets) if resets else 0})
+        if not wins:
+            return {"ok": False, "error": "empty"}
+        return {"ok": True, "windows": wins[:3]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:80]}
+
+
+CODEX_BINS = (
+    os.environ.get("CODEX_CLI_PATH", ""),
+    "/Applications/ChatGPT.app/Contents/Resources/codex",
+    "/Applications/Codex.app/Contents/Resources/codex",
+    shutil.which("codex") or "",
+)
+
+
+def fetch_codex_rate():
+    """Codex 额度窗口：spawn 本机 codex app-server 查询 account/rateLimits/read"""
+    exe = next((p for p in CODEX_BINS if p and os.path.isfile(p)), None)
+    if not exe:
+        return {"ok": False, "error": "NO BIN"}
+    try:
+        proc = subprocess.Popen([exe, "app-server", "--listen", "stdio://"],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.DEVNULL, text=True)
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:80]}
+    result = {}
+    try:
+
+        def send(obj):
+            proc.stdin.write(json.dumps(obj) + "\n")
+            proc.stdin.flush()
+
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
+        deadline = time.time() + 18
+        while time.time() < deadline and result is None:
+            line = proc.stdout.readline()
+            if not line:
+                break
+            try:
+                msg = json.loads(line)
+            except ValueError:
+                continue
+            if msg.get("id") == 1 and not msg.get("error"):
+                send({"method": "initialized", "params": {}})
+                send({"jsonrpc": "2.0", "id": 2,
+                      "method": "account/rateLimits/read", "params": None})
+            elif msg.get("id") == 2:
+                result = msg.get("result")
+                if msg.get("error"):
+                    return {"ok": False, "error": str(msg["error"])[:80]}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:80]}
+    finally:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    if not isinstance(result, dict):
+        return {"ok": False, "error": "bad response"}
+    raw = result.get("rateLimits") or result.get("windows") or []
+    wins = []
+    for item in raw:
+        pct = _pct(item.get("usedPercent"))
+        if pct is None:
+            continue
+        mins = item.get("windowDurationMins") or 0
+        name = f"{int(mins / 60)}h" if mins else ""
+        resets = item.get("resetsAt")
+        wins.append({"name": name, "usedPct": pct,
+                     "resetAt": int(float(resets) * 1000) if resets else 0})
+    if not wins:
+        return {"ok": False, "error": "empty"}
+    return {"ok": True, "windows": wins[:3]}
+
+
 def telemetry(interval=60):
     """独立的遥测线程：系统数据 + 外部数据，每 60s 刷新一次。"""
+    codex_next = 0.0    # codex app-server 查询失败后冷却 5 分钟，避免反复白起进程
     while True:
         low = {"battery": read_battery(), "mem": read_mem(),
                "disk": read_disk(), "load": list(os.getloadavg())}
         with LOCK:
             STATE["sys"] = low
-        resets = {"_wrap": fetch_resets()}
+        resets = fetch_resets()
         ws = fetch_weather()
         ds = fetch_deepseek()
         glm = fetch_glm()
+        claude = fetch_claude()
+        now = time.time()
+        if now >= codex_next:
+            codex = fetch_codex_rate()
+            if not codex.get("ok"):
+                codex_next = now + 300
+        else:
+            codex = {"ok": False, "error": "cooling"}
         with LOCK:
-            STATE["resets"] = resets["_wrap"]
+            STATE["resets"] = resets
             STATE["weather"] = ws
-            STATE["quota"] = {"deepseek": ds, "glm": glm}
+            STATE["quota"] = {"deepseek": ds, "glm": glm,
+                              "claude": claude, "codex": codex}
         time.sleep(interval)
 
 

@@ -149,6 +149,37 @@
     background: rgba(0, 229, 255, 0.12);
     position: relative;
   }
+  /* 额度窗口进度条（参考 kindle-ai-quota-dashboard 的 bars） */
+  .card .qbar {
+    margin-top: 8px;
+    font-size: 9px; letter-spacing: 0.04em;
+    color: rgba(0, 229, 255, 0.6);
+  }
+  .card .qbar .qtop {
+    display: flex; justify-content: space-between;
+    margin-bottom: 3px;
+  }
+  .card .qbar .qtop b { font-weight: normal; color: rgba(0, 229, 255, 0.95); }
+  .card .qbar .bar {
+    height: 4px;
+    background: rgba(0, 229, 255, 0.12);
+  }
+  .card .qbar .bar i {
+    display: block; height: 100%; width: 0%;
+    background: linear-gradient(90deg, rgba(0,229,255,0.5), var(--cyan));
+    box-shadow: 0 0 6px rgba(0, 229, 255, 0.5);
+    transition: width 0.4s linear;
+  }
+  .card .qbar.warn .bar i {
+    background: linear-gradient(90deg, rgba(255,210,122,0.5), var(--gold));
+    box-shadow: 0 0 6px rgba(255, 210, 122, 0.6);
+  }
+  .card .qbar.warn .qtop b { color: var(--gold); }
+  .card .qbar.danger .bar i {
+    background: linear-gradient(90deg, rgba(255,77,94,0.55), var(--red));
+    box-shadow: 0 0 7px rgba(255, 77, 94, 0.7);
+  }
+  .card .qbar.danger .qtop b { color: var(--red); }
   .card .lv i {
     position: absolute; inset: 0 auto 0 0;
     width: 0%;
@@ -321,7 +352,7 @@
     <div class="rows"><span>内存 <b id="sys-mem">—</b></span><span>磁盘 <b id="sys-disk">—</b></span></div>
     <div class="rows"><span>CODEX 重置 <b id="sys-cr">—</b></span><span></span></div>
     <div class="rows"><span>DEEPSEEK 余额 <b id="sys-ds">—</b></span><span></span></div>
-    <div class="rows"><span>GLM 额度 <b id="sys-glm">—</b></span><span></span></div>
+    <div id="q-bars"></div>
   </div>
 </div>
 
@@ -1012,6 +1043,40 @@ function relTime(ts) {
 const badgeText = s => s === "active" ? "活跃" : s === "running" ? "运行中"
   : s === "absent" ? "未安装" : "离线";
 
+/* 额度窗口进度条：所有平台窗口按重置时间排序，取前 5 个（最先重置的最紧迫） */
+function renderQuotaBars(q) {
+  const el = document.getElementById("q-bars");
+  if (!el) return;
+  const PR = { glm: "GLM", claude: "CLAUDE", codex: "CODEX" };
+  const windows = [];
+  for (const key of ["glm", "claude", "codex"]) {
+    const p = q[key];
+    if (!p || !p.ok || !p.windows || !p.windows.length) continue;
+    p.windows.forEach((w, i) => {
+      const nm = key === "codex" && w.name ? " " + w.name : "";
+      const idx = w.name ? "" : " 窗口" + (i + 1);
+      windows.push({
+        label: `${PR[key]}${nm}${idx}`,
+        usedPct: clamp(w.usedPct, 0, 100),
+        resetAt: w.resetAt || 0,
+      });
+    });
+  }
+  windows.sort((a, b) => a.resetAt - b.resetAt);
+  windows.splice(5);
+  el.innerHTML = windows.map(w => {
+    const pct = Math.round(w.usedPct);
+    const cls = pct >= 90 ? "danger" : pct >= 70 ? "warn" : "";
+    let ttl = "";
+    if (w.resetAt) {
+      const h = Math.max(0, w.resetAt - Date.now()) / 36e5;
+      ttl = " · " + (h < 48 ? h.toFixed(1) + "h" : (h / 24).toFixed(1) + "d") + " 重置";
+    }
+    return `<div class="qbar ${cls}"><div class="qtop"><span>${w.label}</span>` +
+           `<b>${pct}%${ttl}</b></div><div class="bar"><i style="width:${pct}%"></i></div></div>`;
+  }).join("");
+}
+
 setInterval(() => {
   let active = 0, running = 0, cpu = 0, energy = 0;
   for (const tk of TOOLS) {
@@ -1055,11 +1120,7 @@ setInterval(() => {
   const q = R.quota || {};
   const dsq = q.deepseek || {};
   sysB("sys-ds", dsq.ok ? (dsq.currency === "CNY" ? "¥" : "$") + dsq.balance.toFixed(2) : "—");
-  const w0 = (q.glm && q.glm.ok && q.glm.windows && q.glm.windows.length) ? q.glm.windows[0] : null;
-  if (w0) {
-    const hrs = Math.max(0, (w0.resetAt - Date.now()) / 36e5);
-    sysB("sys-glm", `${w0.usedPct}%${hrs < 48 ? "·" + hrs.toFixed(1) + "h" : ""}`);
-  } else sysB("sys-glm", "—");
+  renderQuotaBars(q);
 
   // sparkline / 总波形历史
   for (const tk of TOOLS) {
@@ -1153,29 +1214,46 @@ setInterval(() => {
     ["全部系统正常。时刻关注你的代理，先生。", 96],
   ];
   const plain = s => s.replace(/<\/?ok>/g, "");
-  let li = 0, ci = 0, target = 0;
-  function step() {
-    if (li >= lines.length) {
-      setTimeout(() => {
-        barEl.style.width = "100%";
-        bootEl.classList.add("done");
-        setTimeout(() => bootEl.remove(), 1000);
-      }, 600);
-      return;
-    }
-    const [full, pct] = lines[li];
+  let li = 0, ci = 0, target = 0, finished = false;
+
+  // 诊断：boot 期间的异常显示在日志底部
+  window.addEventListener("error", e => {
+    if (finished || !e || !e.message) return;
+    logEl.textContent += "\n[ERR] " + e.message;
+    logEl.style.color = "#ff9aa5";
+  });
+
+  function finish() {
+    if (finished) return;
+    finished = true;
+    clearInterval(iv);
+    barEl.style.width = "100%";
+    bootEl.classList.add("done");
+    setTimeout(() => bootEl.remove(), 1000);
+  }
+
+  const iv = setInterval(() => {
+    if (finished) return;
+    const full = li < lines.length ? lines[li][0] : "";
     ci++;
     if (ci % 2 === 0 || li === 0) {
       const done = lines.slice(0, li).map(([s]) => s.includes("<ok>")
         ? s.replace("<ok>", '<span class="ok">').replace("</ok>", "</span>") : s).join("\n");
-      logEl.innerHTML = done + (li < lines.length ? plain(full.slice(0, ci)) : "");
+      logEl.innerHTML = done + plain(full.slice(0, ci));
     }
-    target = Math.max(target, pct);
-    barEl.style.width = target + "%";
-    if (ci >= full.length) { li++; ci = 0; setTimeout(step, 100); }
-    else setTimeout(step, li === 0 ? 24 : 7);
-  }
-  setTimeout(step, 300);
+    if (li < lines.length) {
+      target = Math.max(target, lines[li][1]);
+      barEl.style.width = target + "%";
+    }
+    if (ci >= full.length) {
+      li++; ci = 0;
+      if (li >= lines.length) { finish(); return; }
+      barEl.style.width = Math.max(target, lines[li][1]) + "%";
+    }
+  }, 12);
+
+  // 兜底：任何意外都保证 14 秒内完成开机动画
+  setTimeout(finish, 14000);
 })();
 
 resize();
