@@ -331,6 +331,7 @@
 const cv  = document.getElementById("scene");
 const ctx = cv.getContext("2d");
 const CYAN = "0,229,255", GOLD = "255,210,122", RED = "255,77,94", GRAY = "96,128,148";
+const GOLD_AMBER = "255,176,46", GOLD_BRIGHT = "255,224,158", CORE_WARM = "255,238,208";
 const c = (rgb, a) => `rgba(${rgb},${a})`;
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
@@ -411,49 +412,214 @@ function toScreen(p, cx, cy, R0) {
 /* =========================================================
  *  场景元素
  * ========================================================= */
-// 核心球点云（斐波那契球）
-const CLOUD_N = 460;
-const cloud = [];
+/* =========================================================
+ *  电影版贾维斯核心基元（参考 Iron Man 全息球：
+ *  金橙色主导 / 随机大圆弧密布网络 / 横向圆盘堆叠 /
+ *  高亮扫掠弧 / 表面节点 / 漂浮碎屑）
+ * ========================================================= */
+// 随机大圆弧网络：每条弧是球面上的随机大圆的一段（随机轴 + 随机跨度）
+// 长短混合：短弧密度大 → 电影里"城市电路"质感；长弧贯穿 → 浑天环骨架
+const network = [];
 {
-  const ga = Math.PI * (3 - Math.sqrt(5));
-  for (let i = 0; i < CLOUD_N; i++) {
-    const y = 1 - (i / (CLOUD_N - 1)) * 2;
-    const r = Math.sqrt(1 - y * y);
-    const th = ga * i;
-    cloud.push({ x: Math.cos(th) * r, y, z: Math.sin(th) * r });
+  const SEGS = { 长: 26, 短: 12 };
+  for (let i = 0; i < 120; i++) {
+    const short = Math.random() < 0.45;
+    const th = Math.random() * Math.PI * 2, ph = Math.acos(Math.random() * 2 - 1);
+    const axis = { x: Math.sin(ph) * Math.cos(th), y: Math.cos(ph), z: Math.sin(ph) * Math.sin(th) };
+    // 正交基 u = normalize(cross(axis, Y)), v = axis × u
+    let u = { x: -axis.z, y: 0, z: axis.x };
+    const ul = Math.hypot(u.x, u.y, u.z) || 1;
+    u = { x: u.x / ul, y: 0, z: u.z / ul };
+    const v = {
+      x: axis.y * u.z - axis.z * u.y,
+      y: axis.z * u.x - axis.x * u.z,
+      z: axis.x * u.y - axis.y * u.x,
+    };
+    const a0 = Math.random() * Math.PI * 2;
+    const span = short ? 0.5 + Math.random() * 0.9        // 短弧 0.25π ~ 0.7π
+                       : 1.4 + Math.random() * 1.6;       // 长弧 0.7π ~ 1.5π
+    const SEG = short ? SEGS.短 : SEGS.长;
+    const pts = [];
+    for (let j = 0; j <= SEG; j++) {
+      const a = a0 + span * (j / SEG);
+      pts.push({
+        x: Math.cos(a) * u.x + Math.sin(a) * v.x,
+        y: Math.cos(a) * u.y + Math.sin(a) * v.y,
+        z: Math.cos(a) * u.z + Math.sin(a) * v.z,
+      });
+    }
+    network.push({ pts, glow: Math.random() < 0.14 });   // 少数高亮弧
   }
 }
-// 经线 / 纬线采样
-const wire = [];
+// 表面发光节点（网络交点的"电路"亮点）
+const nodes = [];
 {
-  const LON = 8, LAT = [ -60, -30, 0, 30, 60 ], SEG = 40;
-  for (let l = 0; l < LON; l++) {
-    const pts = [], a0 = (l / LON) * Math.PI * 2;
-    for (let i = 0; i <= SEG; i++) {
-      const t = (i / SEG) * Math.PI * 2;
-      pts.push({ x: Math.cos(t) * Math.cos(a0), y: Math.sin(t), z: Math.cos(t) * Math.sin(a0) });
-    }
-    wire.push(pts);
-  }
-  for (const lat of LAT) {
-    const pts = [], yr = Math.sin(lat * Math.PI / 180), xr = Math.cos(lat * Math.PI / 180);
-    for (let i = 0; i <= SEG; i++) {
-      const t = (i / SEG) * Math.PI * 2;
-      pts.push({ x: Math.cos(t) * xr, y: yr, z: Math.sin(t) * xr });
-    }
-    wire.push(pts);
+  for (let i = 0; i < 150; i++) {
+    const th = Math.random() * Math.PI * 2, ph = Math.acos(Math.random() * 2 - 1);
+    nodes.push({
+      x: Math.sin(ph) * Math.cos(th), y: Math.cos(ph), z: Math.sin(ph) * Math.sin(th),
+      tw: Math.random() * Math.PI * 2,
+      sz: 0.7 + Math.random() * 1.6,
+      bright: Math.random() < 0.2,
+    });
   }
 }
-// 装饰弧环（贴球旋转弧，非轨道）
-function arcPts(r, a0, a1, n, rotFn) {
-  const pts = [];
-  for (let i = 0; i <= n; i++) {
-    const a = a0 + (a1 - a0) * i / n;
-    let p = { x: Math.cos(a) * r, y: 0, z: Math.sin(a) * r };
-    if (rotFn) p = rotFn(p);
-    pts.push(p);
+// 横向圆盘堆叠（Ion 式扫描盘层）：中间盘更亮更大
+const discs = [];
+{
+  const N_DISC = 9;
+  for (let i = 0; i < N_DISC; i++) {
+    const y = -0.82 + (i / (N_DISC - 1)) * 1.64;
+    const r = Math.sqrt(Math.max(0.001, 1 - y * y)) * (1.06 + 0.05 * Math.sin(i * 2.1));
+    discs.push({
+      y, r,
+      spin: (i % 4) * Math.PI / 3,
+      tick: Math.random() * Math.PI * 2,
+      alpha: 0.24 + 0.26 * (1 - Math.abs(y)),        // 中央盘最亮
+      hot: Math.abs(y) < 0.5,                          // 中部盘用亮金色
+    });
   }
-  return pts;
+}
+// 外部漂浮碎屑（球体外的金色火花）
+const debris = [];
+{
+  for (let i = 0; i < 46; i++) {
+    debris.push({
+      r: 1.12 + Math.random() * 0.55,
+      incl: (Math.random() - 0.5) * 1.6,
+      azim: Math.random() * Math.PI * 2,
+      spd: (0.1 + Math.random() * 0.35) * (Math.random() < 0.5 ? 1 : -1),
+      tw: Math.random() * Math.PI * 2,
+      sz: 0.8 + Math.random() * 1.4,
+    });
+  }
+}
+// 高亮扫掠弧：沿随机大圆缓慢推进的短弧（亮头 + 渐隐尾）
+const sweeps = [];
+{
+  for (let i = 0; i < 3; i++) {
+    const th = Math.random() * Math.PI * 2, ph = (Math.random() - 0.5) * 2.4;
+    const axis = { x: Math.sin(ph) * Math.cos(th), y: Math.cos(ph), z: Math.sin(ph) * Math.sin(th) };
+    let u = { x: -axis.z, y: 0, z: axis.x };
+    const ul = Math.hypot(u.x, u.y, u.z) || 1;
+    u = { x: u.x / ul, y: 0, z: u.z / ul };
+    sweeps.push({
+      u,
+      v: {
+        x: axis.y * u.z - axis.z * u.y,
+        y: axis.z * u.x - axis.x * u.z,
+        z: axis.x * u.y - axis.y * u.x,
+      },
+      head: Math.random() * Math.PI * 2,
+      speed: (0.14 + Math.random() * 0.18) * (i === 1 ? -1 : 1),
+      len: 0.45 + Math.random() * 0.4,
+    });
+  }
+}
+
+/* ---------------- 核心绘制辅助 ---------------- */
+function drawNetwork(L, cx, cy, R0) {
+  ctx.lineWidth = 1;
+  for (const arc of network) {
+    let prev = null;
+    for (const p of arc.pts) {
+      const s = toScreen(rotY(p, sphereYaw), cx, cy, R0);
+      if (prev) {
+        const front = (prev.z + s.z) / 2 < 0;
+        const base = arc.glow ? 0.5 : 0.24;
+        const a = base * L * (front ? 1 : 0.38);
+        if (a > 0.015) {
+          ctx.strokeStyle = c(arc.glow ? GOLD_BRIGHT : GOLD_AMBER, a);
+          ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(s.x, s.y); ctx.stroke();
+        }
+      }
+      prev = s;
+    }
+  }
+}
+function drawDiscs(t, L, cx, cy, R0) {
+  ctx.lineWidth = 1;
+  for (const d of discs) {
+    const wob = 1 + 0.06 * Math.sin(t * 1.4 + d.tick);
+    const rot = sphereYaw * 0.35 + d.spin + t * 0.05;
+    let prev = null;
+    ctx.beginPath();
+    for (let i = 0; i <= 44; i++) {
+      const a = (i / 44) * Math.PI * 2;
+      const p = rotY({
+        x: Math.cos(a) * d.r * wob,
+        y: d.y + 0.015 * Math.sin(t * 1.1 + i),
+        z: Math.sin(a) * d.r * wob,
+      }, rot);
+      const s = toScreen(p, cx, cy, R0);
+      if (prev) { ctx.moveTo(prev.x, prev.y); ctx.lineTo(s.x, s.y); }
+      else ctx.moveTo(s.x, s.y);
+      prev = s;
+    }
+    const soft = 0.6 + 0.4 * Math.sin(t * 2 + d.tick);
+    ctx.strokeStyle = c(d.hot ? GOLD_BRIGHT : GOLD_AMBER, d.alpha * soft * L);
+    ctx.lineWidth = d.hot ? 1.4 : 1;
+    ctx.stroke();
+  }
+}
+function drawNodes(t, L, cx, cy, R0) {
+  for (const n of nodes) {
+    const s = toScreen(rotY({ x: n.x, y: n.y, z: n.z }, sphereYaw * 0.92), cx, cy, R0);
+    const front = s.z < 0;
+    const tw = 0.45 + 0.55 * Math.sin(t * (1.1 + n.sz) + n.tw);
+    const a = (front ? 0.85 : 0.2) * tw * L;
+    if (a < 0.02) continue;
+    if (n.bright) {
+      glow(GOLD_BRIGHT, 10);
+      ctx.fillStyle = c(GOLD_BRIGHT, a);
+    } else {
+      ctx.fillStyle = c(GOLD_AMBER, a);
+    }
+    const sz = n.sz * U * s.k;
+    ctx.fillRect(s.x - sz / 2, s.y - sz / 2, sz, sz);
+    noGlow();
+  }
+}
+function drawSweeps(t, L, cx, cy, R0) {
+  const TAIL = 16;
+  for (const sw of sweeps) {
+    const gp = a => ({
+      x: Math.cos(a) * sw.u.x + Math.sin(a) * sw.v.x,
+      y: Math.cos(a) * sw.u.y + Math.sin(a) * sw.v.y,
+      z: Math.cos(a) * sw.u.z + Math.sin(a) * sw.v.z,
+    });
+    let prev = null;
+    for (let i = 0; i <= TAIL; i++) {
+      const f = i / TAIL;
+      const s = toScreen(rotY(gp(sw.head - sw.len * f), sphereYaw), cx, cy, R0);
+      if (prev) {
+        ctx.strokeStyle = c(i < 3 ? GOLD_BRIGHT : GOLD_AMBER, (1 - f) * 0.7 * L);
+        ctx.lineWidth = f < 0.2 ? 2.2 : 1.2;
+        ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(s.x, s.y); ctx.stroke();
+      }
+      prev = s;
+    }
+    const h = toScreen(rotY(gp(sw.head), sphereYaw), cx, cy, R0);
+    if (h.z < 0) {
+      glow(GOLD_BRIGHT, 12);
+      ctx.fillStyle = c(GOLD_BRIGHT, 0.9 * L);
+      ctx.beginPath(); ctx.arc(h.x, h.y, 2 * U, 0, Math.PI * 2); ctx.fill();
+      noGlow();
+    }
+  }
+}
+function drawDebris(t, L, cx, cy, R0) {
+  for (const p of debris) {
+    const a = p.azim + t * p.spd;
+    let base = { x: Math.cos(a) * p.r, y: 0, z: Math.sin(a) * p.r };
+    base = rotX(base, p.incl);
+    const s = toScreen(base, cx, cy, R0);
+    const tw = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(t * 2.2 + p.tw));
+    const front = s.z < 0;
+    ctx.fillStyle = c(front ? GOLD_AMBER : "255,165,60", (front ? 0.7 : 0.28) * tw * L);
+    const sz = p.sz * U * s.k;
+    ctx.fillRect(s.x - sz / 2, s.y - sz / 2, sz, sz);
+  }
 }
 
 // 三条轨道：各自倾斜 + 半径 + 相位
@@ -533,6 +699,9 @@ function frame(now) {
       }
     }
   }
+  // 高亮扫掠弧推进（能量越高越快）
+  for (const sw of sweeps) sw.head += sw.speed * dt * (0.7 + R.energy * 1.5);
+
   // 脉冲推进
   for (const p of pulses) p.p += p.speed * dt;
   for (let i = pulses.length - 1; i >= 0; i--) {
@@ -557,74 +726,38 @@ function render(t) {
   const cx = W * (W > 900 ? 0.52 : 0.5), cy = H * 0.5;
   const R0 = Math.min(W, H) * 0.146;
   const E = clamp(R.energy, 0, 1);
-  const coreRGB = E > 0.65 ? GOLD : CYAN;
+  const L = 0.32 + E * 0.68;          // 总亮度系数（offline 幽暗金 → active 炽热金）
 
-  // ---- 核心光晕 ----
-  const gr = R0 * (2.1 + R.corePulse * 0.9);
-  const g = ctx.createRadialGradient(cx, cy, R0 * 0.2, cx, cy, gr);
-  g.addColorStop(0, c(coreRGB, 0.16 + E * 0.1 + R.corePulse * 0.14));
-  g.addColorStop(0.55, c(coreRGB, 0.05 + E * 0.05));
-  g.addColorStop(1, c(coreRGB, 0));
+  // ---- 外发光（暖橙光雾）----
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  const gr = R0 * (2.2 + E * 0.7 + R.corePulse * 0.9);
+  const g = ctx.createRadialGradient(cx, cy, R0 * 0.1, cx, cy, gr);
+  g.addColorStop(0, c(GOLD_AMBER, 0.30 * L));
+  g.addColorStop(0.35, c("255,150,40", 0.13 * L));
+  g.addColorStop(0.7, c("255,120,30", 0.045 * L));
+  g.addColorStop(1, c("255,120,30", 0));
   ctx.fillStyle = g;
   ctx.fillRect(cx - gr, cy - gr, gr * 2, gr * 2);
 
-  // ---- 球心能量核 ----
-  const breathe = 0.75 + 0.25 * Math.sin(t * (1.5 + E * 2.5));
-  glow(coreRGB, 22 + R.corePulse * 30);
-  ctx.fillStyle = c(coreRGB, 0.5 + E * 0.3);
-  ctx.beginPath();
-  ctx.arc(cx, cy, R0 * (0.12 + R.corePulse * 0.05) * breathe * 3.2, 0, Math.PI * 2);
-  ctx.fill();
-  noGlow();
+  // ---- 炽热内核（白热行星）----
+  const drum = 1 + Math.sin(t * (1.2 + E * 2)) * 0.045 + R.corePulse * 0.16;
+  const coreR = R0 * 0.40 * drum;
+  const cg = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR);
+  cg.addColorStop(0, c(CORE_WARM, 0.92 * L));
+  cg.addColorStop(0.35, c("255,220,150", 0.48 * L));
+  cg.addColorStop(0.75, c("255,160,60", 0.20 * L));
+  cg.addColorStop(1, c("255,140,40", 0));
+  ctx.fillStyle = cg;
+  ctx.beginPath(); ctx.arc(cx, cy, coreR, 0, Math.PI * 2); ctx.fill();
 
-  // ---- 点云 ----
-  ctx.fillStyle = c(coreRGB, 1);
-  for (const p of cloud) {
-    const q = rotY(p, sphereYaw);
-    const s = toScreen(q, cx, cy, R0);
-    const front = s.z < 0;
-    const a = (front ? 0.75 : 0.16) * (0.35 + E * 0.65);
-    ctx.globalAlpha = a;
-    const sz = (front ? 1.5 : 1) * U * s.k;
-    ctx.fillRect(s.x - sz / 2, s.y - sz / 2, sz, sz);
-  }
-  ctx.globalAlpha = 1;
-
-  // ---- 经纬线 ----
-  ctx.lineWidth = 1;
-  for (const line of wire) {
-    let prev = null;
-    for (const p of line) {
-      const q = rotY(p, sphereYaw);
-      const s = toScreen(q, cx, cy, R0);
-      if (prev && (prev.z < 0.15 || s.z < 0.15)) {
-        const a = (s.z < 0 ? 0.35 : 0.09) * (0.3 + E * 0.7);
-        ctx.strokeStyle = c(coreRGB, a);
-        ctx.beginPath();
-        ctx.moveTo(prev.x, prev.y);
-        ctx.lineTo(s.x, s.y);
-        ctx.stroke();
-      }
-      prev = s;
-    }
-  }
-
-  // ---- 贴球装饰弧（两条反向旋转）----
-  const drawArc = (pts, rgb, a, lw) => {
-    let prev = null;
-    ctx.strokeStyle = c(rgb, a);
-    ctx.lineWidth = lw;
-    for (const p of pts) {
-      const s = toScreen(p, cx, cy, R0);
-      if (prev) {
-        ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(s.x, s.y); ctx.stroke();
-      }
-      prev = s;
-    }
-  };
-  const arcTilt = p => rotX(rotZ(p, 0.35), 0.3);
-  drawArc(arcPts(1.14, sphereYaw * 1.6, sphereYaw * 1.6 + 2.1, 26, arcTilt), CYAN, 0.5 + E * 0.3, 1.6 * U);
-  drawArc(arcPts(1.2, -sphereYaw * 1.1 + 2, -sphereYaw * 1.1 + 3.4, 26, arcTilt), GOLD, 0.35 + E * 0.3, 1.2 * U);
+  // ---- 发光层（additive 叠加，电影式炽热网络）----
+  drawNetwork(L, cx, cy, R0);
+  drawDiscs(t, L, cx, cy, R0);
+  drawNodes(t, L, cx, cy, R0);
+  drawSweeps(t, L, cx, cy, R0);
+  drawDebris(t, L, cx, cy, R0);
+  ctx.restore();
 
   // ---- 三条轨道 + 卫星 ----
   for (const tk of TOOLS) {
@@ -641,6 +774,18 @@ function render(t) {
         ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(s.x, s.y); ctx.stroke();
       }
       prev = s;
+    }
+
+    // 卫星彗尾（轨道上的一段渐亮尾迹）
+    if (src.state === "running" || src.state === "active") {
+      for (let i = 1; i <= 12; i++) {
+        const a = orbitPos[tk] - i * 0.045;
+        const t1 = toScreen(orbitPoint(o, a), cx, cy, R0);
+        const t2 = toScreen(orbitPoint(o, a - 0.03), cx, cy, R0);
+        ctx.strokeStyle = c(rgb, (1 - i / 13) * 0.5 * (src.state === "active" ? 1 : 0.7));
+        ctx.lineWidth = 1.4;
+        ctx.beginPath(); ctx.moveTo(t1.x, t1.y); ctx.lineTo(t2.x, t2.y); ctx.stroke();
+      }
     }
 
     // active 时的轨道粒子流（卫星尾迹）
@@ -695,8 +840,8 @@ function render(t) {
     };
     const s = toScreen(pos, cx, cy, R0);
     const a = Math.sin(Math.PI * Math.min(1, p.p)) * 0.9;
-    glow(GOLD, 14);
-    ctx.fillStyle = c(GOLD, a);
+    glow(GOLD_BRIGHT, 16);
+    ctx.fillStyle = c(GOLD_BRIGHT, a);
     ctx.beginPath(); ctx.arc(s.x, s.y, 2.6 * U * s.k, 0, Math.PI * 2); ctx.fill();
     noGlow();
   }
