@@ -300,40 +300,6 @@ def _pct(used):
     return int(round(v))
 
 
-def fetch_claude():
-    """Claude Code 用量窗口：~/.claude/.credentials.json 的 accessToken（参考项目同源）"""
-    try:
-        creds = json.loads((HOME / ".claude" / ".credentials.json").read_text())
-        token = str(((creds.get("claudeAiOauth") or {}).get("accessToken") or "")).strip()
-    except (OSError, ValueError):
-        token = ""
-    if not token:
-        return {"ok": False, "error": "NO KEY"}
-    try:
-        d = open_json("https://api.anthropic.com/api/oauth/usage",
-                      headers={"Authorization": "Bearer " + token,
-                               "anthropic-beta": "oauth-2025-04-20"}, timeout=10)
-        raw = d.get("rate_limits") if isinstance(d, dict) else None
-        if raw is None and isinstance(d, list):
-            raw = d
-        raw = raw or []
-        wins = []
-        for item in raw:
-            used = item.get("utilization") if item.get("utilization") is not None \
-                else item.get("utilization_pct")
-            pct = _pct(used)
-            if pct is None:
-                continue
-            resets = item.get("resets_at") or item.get("reset_at") or 0
-            wins.append({"usedPct": pct,
-                         "resetAt": int(resets) if resets else 0})
-        if not wins:
-            return {"ok": False, "error": "empty"}
-        return {"ok": True, "windows": wins[:3]}
-    except Exception as e:
-        return {"ok": False, "error": str(e)[:80]}
-
-
 CODEX_BINS = (
     os.environ.get("CODEX_CLI_PATH", ""),
     "/Applications/ChatGPT.app/Contents/Resources/codex",
@@ -415,7 +381,6 @@ def telemetry(interval=60):
         ws = fetch_weather()
         ds = fetch_deepseek()
         glm = fetch_glm()
-        claude = fetch_claude()
         now = time.time()
         if now >= codex_next:
             codex = fetch_codex_rate()
@@ -426,8 +391,7 @@ def telemetry(interval=60):
         with LOCK:
             STATE["resets"] = resets
             STATE["weather"] = ws
-            STATE["quota"] = {"deepseek": ds, "glm": glm,
-                              "claude": claude, "codex": codex}
+            STATE["quota"] = {"deepseek": ds, "glm": glm, "codex": codex}
         time.sleep(interval)
 
 

@@ -1047,9 +1047,9 @@ const badgeText = s => s === "active" ? "活跃" : s === "running" ? "运行中"
 function renderQuotaBars(q) {
   const el = document.getElementById("q-bars");
   if (!el) return;
-  const PR = { glm: "GLM", claude: "CLAUDE", codex: "CODEX" };
+  const PR = { glm: "GLM", codex: "CODEX" };
   const windows = [];
-  for (const key of ["glm", "claude", "codex"]) {
+  for (const key of ["glm", "codex"]) {
     const p = q[key];
     if (!p || !p.ok || !p.windows || !p.windows.length) continue;
     p.windows.forEach((w, i) => {
