@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>J.A.R.V.I.S. Sentinel — AI Agent Monitor</title>
+<title>J.A.R.V.I.S. 哨兵 — AI 代理监控</title>
 <style>
   :root {
     --cyan: #00e5ff;
@@ -69,6 +69,11 @@
   #clock .date {
     font-size: 10px; color: rgba(0, 229, 255, 0.55);
     margin-top: 4px; letter-spacing: 0.12em;
+  }
+  #clock .date.gold {
+    color: rgba(255, 210, 122, 0.9);
+    text-shadow: 0 0 8px rgba(255, 210, 122, 0.5);
+    margin-top: 7px;
   }
 
   /* ---------- 哨兵离线横幅 ---------- */
@@ -272,37 +277,38 @@
 <header>
   <div id="title">
     <h1>J.A.R.V.I.S. SENTINEL</h1>
-    <p>AI AGENT ACTIVITY MONITOR — LOCAL CORE</p>
+    <p>本地 AI 代理活动监控中心</p>
   </div>
   <div id="clock">
     <div class="time">--:--:--</div>
     <div class="date"></div>
+    <div class="date gold" id="clock-wx">—</div>
   </div>
 </header>
 
 <div id="warn">
-  SENTINEL LINK <b>OFFLINE</b> — RUN <b>python3 sentinel.py</b> → http://127.0.0.1:8766
+  哨兵链路 <b>离线</b> — 请运行 <b>python3 sentinel.py</b> → http://127.0.0.1:8766
 </div>
 
 <aside id="cards">
   <div class="card" id="card-codex" data-state="offline">
-    <div class="head"><span class="name">CODEX</span><span class="badge">OFFLINE</span></div>
-    <div class="rows"><span>PROCESSES <b class="v-proc">0</b></span><span>CPU <b class="v-cpu">0%</b></span></div>
-    <div class="rows"><span>LAST ACTIVE <b class="v-last">—</b></span><span>EV <b class="v-ev">0</b></span></div>
+    <div class="head"><span class="name">CODEX</span><span class="badge">离线</span></div>
+    <div class="rows"><span>进程 <b class="v-proc">0</b></span><span>CPU <b class="v-cpu">0%</b></span></div>
+    <div class="rows"><span>最近活动 <b class="v-last">—</b></span><span>事件 <b class="v-ev">0</b></span></div>
     <div class="lv"><i></i></div>
     <canvas class="spark"></canvas>
   </div>
   <div class="card" id="card-claude" data-state="offline">
-    <div class="head"><span class="name">CLAUDE CODE</span><span class="badge">OFFLINE</span></div>
-    <div class="rows"><span>PROCESSES <b class="v-proc">0</b></span><span>CPU <b class="v-cpu">0%</b></span></div>
-    <div class="rows"><span>LAST ACTIVE <b class="v-last">—</b></span><span>EV <b class="v-ev">0</b></span></div>
+    <div class="head"><span class="name">CLAUDE CODE</span><span class="badge">离线</span></div>
+    <div class="rows"><span>进程 <b class="v-proc">0</b></span><span>CPU <b class="v-cpu">0%</b></span></div>
+    <div class="rows"><span>最近活动 <b class="v-last">—</b></span><span>事件 <b class="v-ev">0</b></span></div>
     <div class="lv"><i></i></div>
     <canvas class="spark"></canvas>
   </div>
   <div class="card" id="card-zcode" data-state="offline">
-    <div class="head"><span class="name">ZCODE</span><span class="badge">OFFLINE</span></div>
-    <div class="rows"><span>PROCESSES <b class="v-proc">0</b></span><span>CPU <b class="v-cpu">0%</b></span></div>
-    <div class="rows"><span>LAST ACTIVE <b class="v-last">—</b></span><span>EV <b class="v-ev">0</b></span></div>
+    <div class="head"><span class="name">ZCODE</span><span class="badge">离线</span></div>
+    <div class="rows"><span>进程 <b class="v-proc">0</b></span><span>CPU <b class="v-cpu">0%</b></span></div>
+    <div class="rows"><span>最近活动 <b class="v-last">—</b></span><span>事件 <b class="v-ev">0</b></span></div>
     <div class="lv"><i></i></div>
     <canvas class="spark"></canvas>
   </div>
@@ -310,27 +316,27 @@
 
 <div id="extras">
   <div class="card" id="card-sys" data-state="running">
-    <div class="head"><span class="name">SYSTEM & QUOTA</span><span class="badge">LIVE</span></div>
-    <div class="rows"><span>BATTERY <b id="sys-batt">—</b></span><span>CPU LOAD <b id="sys-load">—</b></span></div>
-    <div class="rows"><span>MEMORY <b id="sys-mem">—</b></span><span>DISK <b id="sys-disk">—</b></span></div>
-    <div class="rows"><span>WEATHER <b id="sys-wx">—</b></span><span></span></div>
-    <div class="rows"><span>CODEX RESET <b id="sys-cr">—</b></span><span></span></div>
-    <div class="rows"><span>DEEPSEEK <b id="sys-ds">—</b></span><span>GLM <b id="sys-glm">—</b></span></div>
+    <div class="head"><span class="name">系统与额度</span><span class="badge">实时</span></div>
+    <div class="rows"><span>电池 <b id="sys-batt">—</b></span><span>CPU 负载 <b id="sys-load">—</b></span></div>
+    <div class="rows"><span>内存 <b id="sys-mem">—</b></span><span>磁盘 <b id="sys-disk">—</b></span></div>
+    <div class="rows"><span>CODEX 重置 <b id="sys-cr">—</b></span><span></span></div>
+    <div class="rows"><span>DEEPSEEK 余额 <b id="sys-ds">—</b></span><span></span></div>
+    <div class="rows"><span>GLM 额度 <b id="sys-glm">—</b></span><span></span></div>
   </div>
 </div>
 
 <div id="summary">
-  <h3>SYSTEM SUMMARY</h3>
-  <div class="row"><span>AGENTS MONITORED</span><b id="s-count">3</b></div>
-  <div class="row"><span>ACTIVE NOW</span><b class="gold" id="s-active">0</b></div>
-  <div class="row"><span>RUNNING</span><b id="s-running">0</b></div>
-  <div class="row"><span>TOTAL CPU</span><b id="s-cpu">0%</b></div>
-  <div class="row"><span>CORE ENERGY</span><b class="gold" id="s-energy">0%</b></div>
-  <div class="row"><span>SENTINEL LINK</span><b id="s-link">WAIT</b></div>
+  <h3>系统总览</h3>
+  <div class="row"><span>监控代理</span><b id="s-count">3</b></div>
+  <div class="row"><span>当前活跃</span><b class="gold" id="s-active">0</b></div>
+  <div class="row"><span>运行中</span><b id="s-running">0</b></div>
+  <div class="row"><span>总 CPU</span><b id="s-cpu">0%</b></div>
+  <div class="row"><span>核心能量</span><b class="gold" id="s-energy">0%</b></div>
+  <div class="row"><span>哨兵链路</span><b id="s-link">WAIT</b></div>
 </div>
 
 <footer>
-  <div class="cap"><span>AGGREGATE NEURAL LOAD</span><span id="wave-info">—</span></div>
+  <div class="cap"><span>综合神经负载</span><span id="wave-info">—</span></div>
   <canvas id="wave"></canvas>
 </footer>
 
@@ -999,12 +1005,12 @@ cv.addEventListener("pointercancel", endDrag);
 function relTime(ts) {
   if (!ts) return "—";
   const s = Math.max(0, (Date.now() / 1000 - ts));
-  if (s < 60) return Math.round(s) + "s AGO";
-  if (s < 3600) return Math.round(s / 60) + "m AGO";
-  return Math.round(s / 3600) + "h AGO";
+  if (s < 60) return Math.round(s) + " 秒前";
+  if (s < 3600) return Math.round(s / 60) + " 分钟前";
+  return Math.round(s / 3600) + " 小时前";
 }
-const badgeText = s => s === "active" ? "ACTIVE" : s === "running" ? "RUNNING"
-  : s === "absent" ? "N/A" : "OFFLINE";
+const badgeText = s => s === "active" ? "活跃" : s === "running" ? "运行中"
+  : s === "absent" ? "未安装" : "离线";
 
 setInterval(() => {
   let active = 0, running = 0, cpu = 0, energy = 0;
@@ -1014,7 +1020,7 @@ setInterval(() => {
     card.querySelector(".badge").textContent = badgeText(src.state);
     card.querySelector(".v-proc").textContent = src.procs || 0;
     card.querySelector(".v-cpu").textContent = (src.cpu || 0).toFixed(1) + "%";
-    card.querySelector(".v-last").textContent = src.state === "active" ? "NOW" : relTime(src.lastActive);
+    card.querySelector(".v-last").textContent = src.state === "active" ? "此刻" : relTime(src.lastActive);
     card.querySelector(".v-ev").textContent = src.events || 0;
     card.querySelector(".lv i").style.width = Math.round(R.disp[tk].level * 100) + "%";
     if (src.state === "active") active++;
@@ -1037,7 +1043,7 @@ setInterval(() => {
   sysB("sys-mem", sp.mem && sp.mem.total_gb ? `${sp.mem.used_gb}/${sp.mem.total_gb}G` : "—");
   sysB("sys-disk", sp.disk && sp.disk.total_gb ? `${sp.disk.free_gb}/${sp.disk.total_gb}G` : "—");
   const wx = R.weather || {};
-  sysB("sys-wx", wx.ok ? `${Math.round(wx.temp)}° ${wx.text}` : "—");
+  sysB("clock-wx", wx.ok ? `${Math.round(wx.temp)}° ${wx.text}` : "—");
   const rs = R.resets || {};
   if (rs.ok && rs.last) {
     const days = (Date.now() - Date.parse(rs.last)) / 86400e3;
@@ -1064,7 +1070,7 @@ setInterval(() => {
   if (R.agg.length > 160) R.agg.shift();
   drawWave();
   document.getElementById("wave-info").textContent =
-    R.linked ? `${Math.round(agg * 100)}% LOAD — ${TOOLS.filter(k => R.tools[k].state === "active").length} AGENT(S) ENGAGED` : "NO DATA";
+    R.linked ? `${Math.round(agg * 100)}% 负载 — ${TOOLS.filter(k => R.tools[k].state === "active").length} 个代理工作中` : "无数据";
 }, 500);
 
 function drawSpark(canvasEl, data) {
@@ -1120,9 +1126,9 @@ setInterval(() => {
   const n = new Date();
   const p = v => String(v).padStart(2, "0");
   document.querySelector("#clock .time").textContent = `${p(n.getHours())}:${p(n.getMinutes())}:${p(n.getSeconds())}`;
-  const days = ["SUN","MON","TUE","WED","THU","FRI","SAT"];
+  const days = ["日","一","二","三","四","五","六"];
   document.querySelector("#clock .date").textContent =
-    `${n.getFullYear()}.${p(n.getMonth()+1)}.${p(n.getDate())} ${days[n.getDay()]}`;
+    `${n.getFullYear()}.${p(n.getMonth()+1)}.${p(n.getDate())} 周${days[n.getDay()]}`;
 }, 500);
 
 /* =========================================================
@@ -1133,16 +1139,16 @@ setInterval(() => {
   const barEl = document.querySelector("#boot-bar i");
   const bootEl = document.getElementById("boot");
   const lines = [
-    ["J.A.R.V.I.S. SENTINEL  v1.0  —  AGENT WATCH PROTOCOL", 0],
+    ["J.A.R.V.I.S. 哨兵  v1.0  —  代理监护协议", 0],
     ["", 0],
-    ["SCANNING AGENT RUNTIMES ........... <ok>3 FOUND</ok>", 8],
-    ["  CODEX RUNTIME ................... <ok>LINKED</ok>", 24],
-    ["  CLAUDE CODE RUNTIME ............. <ok>LINKED</ok>", 40],
-    ["  ZCODE RUNTIME ................... <ok>LINKED</ok>", 56],
-    ["SENTINEL DAEMON ................... <ok>ARMED</ok>", 72],
-    ["HOLOGRAPHIC CORE .................. <ok>ONLINE</ok>", 86],
+    ["扫描代理运行时 .................... <ok>发现 3 个</ok>", 8],
+    ["  CODEX 运行时 .................... <ok>已连接</ok>", 24],
+    ["  CLAUDE CODE 运行时 .............. <ok>已连接</ok>", 40],
+    ["  ZCODE 运行时 .................... <ok>已连接</ok>", 56],
+    ["哨兵守护进程 ...................... <ok>已就绪</ok>", 72],
+    ["全息核心 .......................... <ok>在线</ok>", 86],
     ["", 0],
-    ["ALL SYSTEMS NOMINAL. WATCHING YOUR AGENTS, SIR.", 96],
+    ["全部系统正常。时刻关注你的代理，先生。", 96],
   ];
   const plain = s => s.replace(/<\/?ok>/g, "");
   let li = 0, ci = 0, target = 0;
