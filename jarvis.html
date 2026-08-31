@@ -337,8 +337,9 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
 let W = 0, H = 0, U = 1;
 function resize() {
-  const dpr = Math.min(devicePixelRatio || 1, 2);
   W = innerWidth; H = innerHeight;
+  // 大屏降采样，保证高分辨率下的帧率
+  const dpr = Math.min(devicePixelRatio || 1, W * H > 1.8e6 ? 1.5 : 2);
   cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   U = Math.max(0.5, Math.min(W, H) / 900);
@@ -519,17 +520,117 @@ const sweeps = [];
 
 /* ---------------- 核心绘制辅助 ---------------- */
 function drawNetwork(L, cx, cy, R0) {
-  ctx.lineWidth = 1;
   for (const arc of network) {
     let prev = null;
     for (const p of arc.pts) {
       const s = toScreen(rotY(p, sphereYaw), cx, cy, R0);
       if (prev) {
         const front = (prev.z + s.z) / 2 < 0;
-        const base = arc.glow ? 0.5 : 0.24;
-        const a = base * L * (front ? 1 : 0.38);
-        if (a > 0.015) {
-          ctx.strokeStyle = c(arc.glow ? GOLD_BRIGHT : GOLD_AMBER, a);
+        const base = arc.glow ? 0.85 : 0.42;
+        const a = base * L * (front ? 1 : 0.3);
+        if (a > 0.02) {
+          const rgb = arc.glow ? GOLD_BRIGHT : GOLD_AMBER;
+          if (front && arc.glow) {
+            // 双层描边模拟辉光（不用 shadowBlur，保帧率）
+            ctx.strokeStyle = c(rgb, a * 0.25);
+            ctx.lineWidth = 4.4;
+            ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(s.x, s.y); ctx.stroke();
+          }
+          ctx.strokeStyle = c(rgb, a);
+          ctx.lineWidth = arc.glow ? 1.7 : 1;
+          ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(s.x, s.y); ctx.stroke();
+        }
+      }
+      prev = s;
+    }
+  }
+}
+// 城市网格壳层：密集纬度圈 + 短竖条纹 → 电影里的"地表城市灯网"
+const cityGrid = [];
+{
+  const lats = [-72, -58, -45, -32, -20, -9, 9, 20, 32, 45, 58, 72];
+  for (const latDeg of lats) {
+    const lat = latDeg * Math.PI / 180;
+    const yr = Math.sin(lat), xr = Math.cos(lat);
+    const pts = [];
+    for (let i = 0; i <= 44; i++) {
+      const a = (i / 44) * Math.PI * 2;
+      pts.push({ x: Math.cos(a) * xr, y: yr, z: Math.sin(a) * xr });
+    }
+    cityGrid.push({ pts, hot: Math.abs(latDeg) < 30 });
+  }
+  // 短竖条纹：固定经度、跨两纬度圈的"街道"，赤道附近更密
+  for (let i = 0; i < 120; i++) {
+    const lon = Math.random() * Math.PI * 2;
+    const lat0 = (Math.random() - 0.5) * 1.15;
+    const lat1 = lat0 + (0.18 + Math.random() * 0.3) * (Math.random() < 0.5 ? 1 : -1);
+    const pts = [];
+    for (let j = 0; j <= 6; j++) {
+      const lat = lat0 + (lat1 - lat0) * j / 6;
+      const yr = Math.sin(lat), xr = Math.cos(lat);
+      pts.push({ x: Math.cos(lon) * xr, y: yr, z: Math.sin(lon) * xr });
+    }
+    cityGrid.push({ pts, hot: Math.random() < 0.25 });
+  }
+}
+function drawGrid(L, cx, cy, R0) {
+  for (const g0 of cityGrid) {
+    let prev = null;
+    for (const p of g0.pts) {
+      const s = toScreen(rotY(p, sphereYaw * 0.8), cx, cy, R0);
+      if (prev) {
+        const front = (prev.z + s.z) / 2 < 0;
+        const base = g0.hot ? 0.5 : 0.32;
+        const a = base * L * (front ? 1 : 0.3);
+        if (a > 0.02) {
+          ctx.strokeStyle = c(g0.hot ? GOLD_BRIGHT : GOLD_AMBER, a);
+          ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(s.x, s.y); ctx.stroke();
+        }
+      }
+      prev = s;
+    }
+  }
+}
+// 大号拱环：突出球外的大圆环（含一条蓝色点缀环，如电影左中的蓝弧）
+const hoops = [];
+{
+  const defs = [
+    { r: 1.22, tiltX: 0.95,  tiltZ: 0.2,  span: 5.0, rgb: GOLD_AMBER,    spd: 0.10 },
+    { r: 1.31, tiltX: -0.65, tiltZ: 1.15, span: 4.3, rgb: GOLD_AMBER,    spd: -0.08 },
+    { r: 1.40, tiltX: 0.42,  tiltZ: -1.05, span: 5.6, rgb: "0,214,255",  spd: 0.14 },
+    { r: 1.19, tiltX: -1.25, tiltZ: 0.85, span: 3.6, rgb: GOLD_AMBER,    spd: 0.06 },
+  ];
+  for (const d of defs) {
+    const pts = [];
+    for (let i = 0; i <= 64; i++) {
+      const a = (i / 64) * d.span;
+      let p = { x: Math.cos(a) * d.r, y: 0, z: Math.sin(a) * d.r };
+      p = rotX(p, d.tiltX);
+      p = rotZ(p, d.tiltZ);
+      pts.push(p);
+    }
+    hoops.push({ ...d, pts, phase: Math.random() * Math.PI * 2 });
+  }
+}
+function drawHoops(t, L, cx, cy, R0) {
+  for (const h of hoops) {
+    const rot = h.phase + t * h.spd;
+    const isCyan = h.rgb === "0,214,255";
+    let prev = null;
+    for (const p of h.pts) {
+      const s = toScreen(rotY(p, sphereYaw * 0.6 + rot), cx, cy, R0);
+      if (prev) {
+        const front = (prev.z + s.z) / 2 < 0;
+        const a = (isCyan ? 0.8 : 0.5) * L * (front ? 1 : 0.28);
+        if (a > 0.02) {
+          if (front) {
+            ctx.strokeStyle = c(h.rgb, a * 0.28);
+            ctx.lineWidth = isCyan ? 4.4 : 3.2;
+            ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(s.x, s.y); ctx.stroke();
+          }
+          ctx.strokeStyle = c(h.rgb, a);
+          ctx.lineWidth = isCyan ? 1.8 : 1.2;
           ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(s.x, s.y); ctx.stroke();
         }
       }
@@ -569,15 +670,15 @@ function drawNodes(t, L, cx, cy, R0) {
     const tw = 0.45 + 0.55 * Math.sin(t * (1.1 + n.sz) + n.tw);
     const a = (front ? 0.85 : 0.2) * tw * L;
     if (a < 0.02) continue;
+    const sz = (n.bright ? 2.6 : n.sz) * U * s.k;
     if (n.bright) {
-      glow(GOLD_BRIGHT, 10);
+      ctx.fillStyle = c(GOLD_BRIGHT, a * 0.22);          // 光晕层
+      ctx.fillRect(s.x - sz * 2.2, s.y - sz * 2.2, sz * 4.4, sz * 4.4);
       ctx.fillStyle = c(GOLD_BRIGHT, a);
     } else {
       ctx.fillStyle = c(GOLD_AMBER, a);
     }
-    const sz = n.sz * U * s.k;
     ctx.fillRect(s.x - sz / 2, s.y - sz / 2, sz, sz);
-    noGlow();
   }
 }
 function drawSweeps(t, L, cx, cy, R0) {
@@ -601,10 +702,10 @@ function drawSweeps(t, L, cx, cy, R0) {
     }
     const h = toScreen(rotY(gp(sw.head), sphereYaw), cx, cy, R0);
     if (h.z < 0) {
-      glow(GOLD_BRIGHT, 12);
+      ctx.fillStyle = c(GOLD_BRIGHT, 0.3 * L);
+      ctx.beginPath(); ctx.arc(h.x, h.y, 5.5 * U, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = c(GOLD_BRIGHT, 0.9 * L);
       ctx.beginPath(); ctx.arc(h.x, h.y, 2 * U, 0, Math.PI * 2); ctx.fill();
-      noGlow();
     }
   }
 }
@@ -624,9 +725,9 @@ function drawDebris(t, L, cx, cy, R0) {
 
 // 三条轨道：各自倾斜 + 半径 + 相位
 const ORBITS = {
-  codex:  { r: 1.55, incl: 0.42, azim: 0.00, phase: 0.0,  label: "CODEX" },
-  claude: { r: 1.85, incl: -0.34, azim: 2.10, phase: 2.4,  label: "CLAUDE" },
-  zcode:  { r: 2.10, incl: 0.50, azim: 4.00, phase: 4.3,  label: "ZCODE" },
+  codex:  { r: 1.42, incl: 0.42, azim: 0.00, phase: 0.0,  label: "CODEX" },
+  claude: { r: 1.68, incl: -0.34, azim: 2.10, phase: 2.4,  label: "CLAUDE" },
+  zcode:  { r: 1.92, incl: 0.50, azim: 4.00, phase: 4.3,  label: "ZCODE" },
 };
 const orbitPos = {};   // 各工具卫星当前角度
 for (const t of TOOLS) orbitPos[t] = ORBITS[t].phase;
@@ -724,35 +825,37 @@ function noGlow() { ctx.shadowBlur = 0; }
 function render(t) {
   ctx.clearRect(0, 0, W, H);
   const cx = W * (W > 900 ? 0.52 : 0.5), cy = H * 0.5;
-  const R0 = Math.min(W, H) * 0.146;
+  const R0 = Math.min(W * 0.165, H * 0.215);   // 大屏不显小：按宽高自适应放大
   const E = clamp(R.energy, 0, 1);
-  const L = 0.32 + E * 0.68;          // 总亮度系数（offline 幽暗金 → active 炽热金）
+  const L = 0.5 + E * 0.5;            // 总亮度系数（待机也是暖亮金 → active 炽热）
 
   // ---- 外发光（暖橙光雾）----
   ctx.save();
   ctx.globalCompositeOperation = "lighter";
-  const gr = R0 * (2.2 + E * 0.7 + R.corePulse * 0.9);
+  const gr = R0 * (2.6 + E * 0.7 + R.corePulse * 0.9);
   const g = ctx.createRadialGradient(cx, cy, R0 * 0.1, cx, cy, gr);
-  g.addColorStop(0, c(GOLD_AMBER, 0.30 * L));
-  g.addColorStop(0.35, c("255,150,40", 0.13 * L));
-  g.addColorStop(0.7, c("255,120,30", 0.045 * L));
+  g.addColorStop(0, c(GOLD_AMBER, 0.42 * L));
+  g.addColorStop(0.35, c("255,165,55", 0.20 * L));
+  g.addColorStop(0.7, c("255,130,35", 0.08 * L));
   g.addColorStop(1, c("255,120,30", 0));
   ctx.fillStyle = g;
   ctx.fillRect(cx - gr, cy - gr, gr * 2, gr * 2);
 
   // ---- 炽热内核（白热行星）----
   const drum = 1 + Math.sin(t * (1.2 + E * 2)) * 0.045 + R.corePulse * 0.16;
-  const coreR = R0 * 0.40 * drum;
+  const coreR = R0 * 0.46 * drum;
   const cg = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR);
-  cg.addColorStop(0, c(CORE_WARM, 0.92 * L));
-  cg.addColorStop(0.35, c("255,220,150", 0.48 * L));
-  cg.addColorStop(0.75, c("255,160,60", 0.20 * L));
+  cg.addColorStop(0, c(CORE_WARM, 0.95 * L));
+  cg.addColorStop(0.35, c("255,220,150", 0.55 * L));
+  cg.addColorStop(0.75, c("255,160,60", 0.24 * L));
   cg.addColorStop(1, c("255,140,40", 0));
   ctx.fillStyle = cg;
   ctx.beginPath(); ctx.arc(cx, cy, coreR, 0, Math.PI * 2); ctx.fill();
 
-  // ---- 发光层（additive 叠加，电影式炽热网络）----
+  // ---- 发光层（additive 叠加，电影式炽热多层结构）----
   drawNetwork(L, cx, cy, R0);
+  drawGrid(L, cx, cy, R0);
+  drawHoops(t, L, cx, cy, R0);
   drawDiscs(t, L, cx, cy, R0);
   drawNodes(t, L, cx, cy, R0);
   drawSweeps(t, L, cx, cy, R0);
