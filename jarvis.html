@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>J.A.R.V.I.S. Sentinel — AI Agent Monitor</title>
+<style>
+  :root {
+    --cyan: #00e5ff;
+    --gold: #ffd27a;
+    --red: #ff4d5e;
+    --dim: rgba(0, 229, 255, 0.35);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #000509;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Courier New", monospace;
+    color: var(--cyan);
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  #scene {
+    position: fixed; inset: 0;
+    width: 100%; height: 100%;
+    display: block;
+    cursor: grab;
+    touch-action: none;
+  }
+  #scene.dragging { cursor: grabbing; }
+
+  /* 扫描线 + 暗角 */
+  #fx {
+    position: fixed; inset: 0;
+    pointer-events: none; z-index: 20;
+    background:
+      repeating-linear-gradient(0deg,
+        rgba(0,0,0,0.15) 0px, rgba(0,0,0,0.15) 1px,
+        transparent 1px, transparent 3px),
+      radial-gradient(ellipse at center, transparent 50%, rgba(0,8,16,0.6) 100%);
+  }
+
+  /* ---------- 顶栏 ---------- */
+  header {
+    position: fixed; top: 0; left: 0; right: 0;
+    z-index: 10;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 22px 34px;
+    pointer-events: none;
+  }
+  #title h1 {
+    font-size: 17px; letter-spacing: 0.3em;
+    color: var(--gold);
+    text-shadow: 0 0 12px rgba(255, 210, 122, 0.7);
+    font-weight: normal;
+  }
+  #title p {
+    font-size: 9.5px; letter-spacing: 0.2em;
+    color: rgba(0, 229, 255, 0.55);
+    margin-top: 6px;
+  }
+  #clock { text-align: right; }
+  #clock .time {
+    font-size: 26px;
+    text-shadow: 0 0 14px rgba(0, 229, 255, 0.75);
+  }
+  #clock .date {
+    font-size: 10px; color: rgba(0, 229, 255, 0.55);
+    margin-top: 4px; letter-spacing: 0.12em;
+  }
+
+  /* ---------- 哨兵离线横幅 ---------- */
+  #warn {
+    position: fixed; top: 78px; left: 50%;
+    transform: translateX(-50%);
+    z-index: 30;
+    display: none;
+    border: 1px solid var(--red);
+    background: rgba(24, 0, 6, 0.85);
+    box-shadow: 0 0 30px rgba(255, 77, 94, 0.35);
+    padding: 10px 26px;
+    font-size: 11px; letter-spacing: 0.14em;
+    color: #ff9aa5;
+    animation: blink 2s ease-in-out infinite;
+  }
+  #warn.show { display: block; }
+  #warn b { color: var(--red); }
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
+
+  /* ---------- 工具状态卡 ---------- */
+  #cards {
+    position: fixed; left: 30px; top: 130px;
+    z-index: 10;
+    display: flex; flex-direction: column; gap: 18px;
+    width: 240px;
+  }
+  .card {
+    border: 1px solid rgba(0, 229, 255, 0.35);
+    background: rgba(0, 20, 30, 0.42);
+    backdrop-filter: blur(2px);
+    clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
+    padding: 14px 16px 12px;
+    position: relative;
+    transition: border-color 0.5s, box-shadow 0.5s;
+  }
+  .card[data-state="active"] {
+    border-color: rgba(255, 210, 122, 0.85);
+    box-shadow: 0 0 26px rgba(255, 210, 122, 0.22), inset 0 0 22px rgba(255, 210, 122, 0.06);
+  }
+  .card[data-state="running"] {
+    box-shadow: 0 0 22px rgba(0, 229, 255, 0.16);
+  }
+  .card[data-state="offline"], .card[data-state="absent"] {
+    opacity: 0.55;
+  }
+  .card .head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .card .name {
+    font-size: 13px; letter-spacing: 0.18em;
+  }
+  .card[data-state="active"] .name { color: var(--gold); text-shadow: 0 0 10px rgba(255,210,122,0.8); }
+  .card .badge {
+    font-size: 8.5px; letter-spacing: 0.14em;
+    padding: 3px 8px;
+    border: 1px solid currentColor;
+  }
+  .card[data-state="active"]   .badge { color: var(--gold); }
+  .card[data-state="running"]  .badge { color: var(--cyan); }
+  .card[data-state="offline"]  .badge { color: #5a788c; }
+  .card[data-state="absent"]   .badge { color: #40525e; }
+  .card .rows {
+    font-size: 9.5px; line-height: 1.9;
+    color: rgba(0, 229, 255, 0.62);
+    display: flex; justify-content: space-between;
+  }
+  .card .rows b { font-weight: normal; color: rgba(0, 229, 255, 0.95); }
+  .card[data-state="active"] .rows b { color: rgba(255, 224, 160, 0.95); }
+  .card .lv {
+    margin-top: 9px; height: 4px;
+    background: rgba(0, 229, 255, 0.12);
+    position: relative;
+  }
+  .card .lv i {
+    position: absolute; inset: 0 auto 0 0;
+    width: 0%;
+    background: linear-gradient(90deg, rgba(0,229,255,0.5), var(--cyan));
+    transition: width 0.35s linear;
+  }
+  .card[data-state="active"] .lv i {
+    background: linear-gradient(90deg, rgba(255,210,122,0.5), var(--gold));
+    box-shadow: 0 0 10px rgba(255, 210, 122, 0.7);
+  }
+  .card canvas.spark {
+    display: block; width: 100%; height: 22px;
+    margin-top: 8px;
+  }
+
+  /* ---------- 右侧总览卡 ---------- */
+  #summary {
+    position: fixed; right: 30px; top: 130px;
+    z-index: 10;
+    width: 220px;
+    border: 1px solid rgba(0, 229, 255, 0.3);
+    background: rgba(0, 20, 30, 0.42);
+    clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
+    padding: 14px 16px;
+  }
+  #summary h3 {
+    font-size: 10px; letter-spacing: 0.22em;
+    color: var(--gold);
+    font-weight: normal; margin-bottom: 12px;
+  }
+  #summary .row {
+    display: flex; justify-content: space-between;
+    font-size: 9.5px; line-height: 2.1;
+    color: rgba(0, 229, 255, 0.6);
+  }
+  #summary .row b { font-weight: normal; color: var(--cyan); font-size: 11px; }
+  #summary .row b.gold { color: var(--gold); text-shadow: 0 0 8px rgba(255,210,122,0.6); }
+
+  /* ---------- 底部波形 ---------- */
+  footer {
+    position: fixed; left: 50%; bottom: 26px;
+    transform: translateX(-50%);
+    z-index: 10;
+    width: min(680px, 60vw);
+    pointer-events: none;
+  }
+  footer .cap {
+    display: flex; justify-content: space-between;
+    font-size: 9px; letter-spacing: 0.2em;
+    color: rgba(0, 229, 255, 0.55);
+    margin-bottom: 6px;
+  }
+  #wave { width: 100%; height: 44px; display: block; }
+
+  /* ---------- 开机动画 ---------- */
+  #boot {
+    position: fixed; inset: 0; z-index: 100;
+    background: #000;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    transition: opacity 0.9s ease;
+  }
+  #boot.done { opacity: 0; pointer-events: none; }
+  #boot-ring { position: relative; width: 170px; height: 170px; margin-bottom: 40px; }
+  #boot-ring::before, #boot-ring::after {
+    content: ""; position: absolute; inset: 0;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 229, 255, 0.35);
+  }
+  #boot-ring::before {
+    border-top-color: var(--cyan); border-right-color: var(--cyan);
+    animation: spin 1.6s linear infinite;
+  }
+  #boot-ring::after {
+    inset: 22px;
+    border-bottom-color: var(--gold); border-left-color: var(--gold);
+    animation: spin 1.1s linear infinite reverse;
+  }
+  #boot-core {
+    position: absolute; inset: 64px; border-radius: 50%;
+    background: var(--cyan);
+    box-shadow: 0 0 24px 6px rgba(0, 229, 255, 0.65);
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  #boot-log {
+    width: min(520px, 84vw); height: 170px;
+    font-size: 13px; line-height: 1.75; letter-spacing: 0.06em;
+    text-shadow: 0 0 8px rgba(0, 229, 255, 0.7);
+    white-space: pre-wrap;
+  }
+  #boot-log .ok { color: var(--gold); }
+  #boot-bar {
+    width: min(520px, 84vw); height: 3px;
+    margin-top: 18px;
+    background: rgba(0, 229, 255, 0.15); overflow: hidden;
+  }
+  #boot-bar i {
+    display: block; height: 100%; width: 0%;
+    background: linear-gradient(90deg, rgba(0,229,255,0.35), var(--cyan));
+    box-shadow: 0 0 12px rgba(0, 229, 255, 0.8);
+    transition: width 0.15s linear;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes pulse { 0%,100% { opacity: 0.35; } 50% { opacity: 1; } }
+
+  @media (max-width: 900px) {
+    #cards { width: 190px; left: 16px; top: 110px; gap: 12px; }
+    #summary { display: none; }
+    footer { width: 80vw; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="scene"></canvas>
+<div id="fx"></div>
+
+<header>
+  <div id="title">
+    <h1>J.A.R.V.I.S. SENTINEL</h1>
+    <p>AI AGENT ACTIVITY MONITOR — LOCAL CORE</p>
+  </div>
+  <div id="clock">
+    <div class="time">--:--:--</div>
+    <div class="date"></div>
+  </div>
+</header>
+
+<div id="warn">
+  SENTINEL LINK <b>OFFLINE</b> — RUN <b>python3 sentinel.py</b> → http://127.0.0.1:8766
+</div>
+
+<aside id="cards">
+  <div class="card" id="card-codex" data-state="offline">
+    <div class="head"><span class="name">CODEX</span><span class="badge">OFFLINE</span></div>
+    <div class="rows"><span>PROCESSES <b class="v-proc">0</b></span><span>CPU <b class="v-cpu">0%</b></span></div>
+    <div class="rows"><span>LAST ACTIVE <b class="v-last">—</b></span><span>EV <b class="v-ev">0</b></span></div>
+    <div class="lv"><i></i></div>
+    <canvas class="spark"></canvas>
+  </div>
+  <div class="card" id="card-claude" data-state="offline">
+    <div class="head"><span class="name">CLAUDE CODE</span><span class="badge">OFFLINE</span></div>
+    <div class="rows"><span>PROCESSES <b class="v-proc">0</b></span><span>CPU <b class="v-cpu">0%</b></span></div>
+    <div class="rows"><span>LAST ACTIVE <b class="v-last">—</b></span><span>EV <b class="v-ev">0</b></span></div>
+    <div class="lv"><i></i></div>
+    <canvas class="spark"></canvas>
+  </div>
+  <div class="card" id="card-zcode" data-state="offline">
+    <div class="head"><span class="name">ZCODE</span><span class="badge">OFFLINE</span></div>
+    <div class="rows"><span>PROCESSES <b class="v-proc">0</b></span><span>CPU <b class="v-cpu">0%</b></span></div>
+    <div class="rows"><span>LAST ACTIVE <b class="v-last">—</b></span><span>EV <b class="v-ev">0</b></span></div>
+    <div class="lv"><i></i></div>
+    <canvas class="spark"></canvas>
+  </div>
+</aside>
+
+<div id="summary">
+  <h3>SYSTEM SUMMARY</h3>
+  <div class="row"><span>AGENTS MONITORED</span><b id="s-count">3</b></div>
+  <div class="row"><span>ACTIVE NOW</span><b class="gold" id="s-active">0</b></div>
+  <div class="row"><span>RUNNING</span><b id="s-running">0</b></div>
+  <div class="row"><span>TOTAL CPU</span><b id="s-cpu">0%</b></div>
+  <div class="row"><span>CORE ENERGY</span><b class="gold" id="s-energy">0%</b></div>
+  <div class="row"><span>SENTINEL LINK</span><b id="s-link">WAIT</b></div>
+</div>
+
+<footer>
+  <div class="cap"><span>AGGREGATE NEURAL LOAD</span><span id="wave-info">—</span></div>
+  <canvas id="wave"></canvas>
+</footer>
+
+<div id="boot">
+  <div id="boot-ring"><div id="boot-core"></div></div>
+  <div id="boot-log"></div>
+  <div id="boot-bar"><i></i></div>
+</div>
+
+<script>
+"use strict";
+/* =========================================================
+ *  J.A.R.V.I.S. Sentinel 页面
+ *  数据: SSE ← sentinel.py（进程 + 会话活动检测）
+ *  渲染: Canvas 2D 手写 3D 投影（核心球 + 三轨道 + 脉冲）
+ * ========================================================= */
+const cv  = document.getElementById("scene");
+const ctx = cv.getContext("2d");
+const CYAN = "0,229,255", GOLD = "255,210,122", RED = "255,77,94", GRAY = "96,128,148";
+const c = (rgb, a) => `rgba(${rgb},${a})`;
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+let W = 0, H = 0, U = 1;
+function resize() {
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  U = Math.max(0.5, Math.min(W, H) / 900);
+  for (const id of ["spark-size"]) {} // no-op
+  document.querySelectorAll("canvas.spark").forEach(s => {
+    const r = s.getBoundingClientRect();
+    s.width = Math.max(10, Math.round(r.width * dpr));
+    s.height = Math.round(22 * dpr);
+  });
+  const wv = document.getElementById("wave"), wr = wv.getBoundingClientRect();
+  wv.width = Math.round(wr.width * dpr); wv.height = Math.round(44 * dpr);
+}
+addEventListener("resize", resize);
+
+/* ---------------- 状态 ---------------- */
+const TOOLS = ["codex", "claude", "zcode"];
+const R = {
+  linked: false, lastMsg: 0,
+  tools: {},          // 哨兵数据
+  disp: {},           // 平滑显示值
+  sparks: {},         // 每工具 sparkline 历史
+  agg: [],            // 总波形历史
+  energy: 0, corePulse: 0,
+};
+for (const t of TOOLS) {
+  R.tools[t] = { state: "offline", level: 0, procs: 0, cpu: 0, lastActive: 0, events: 0, installed: true };
+  R.disp[t] = { level: 0 };
+  R.sparks[t] = [];
+}
+
+/* ---------------- SSE 接入 ---------------- */
+let es = null;
+function connect() {
+  try { es && es.close(); } catch (e) {}
+  es = new EventSource("/events");
+  es.onmessage = e => {
+    try {
+      const d = JSON.parse(e.data);
+      R.lastMsg = performance.now();
+      const wasLinked = R.linked;
+      R.linked = true;
+      for (const t of TOOLS) {
+        if (d.tools && d.tools[t]) R.tools[t] = { ...R.tools[t], ...d.tools[t] };
+      }
+      if (!wasLinked) document.getElementById("warn").classList.remove("show");
+    } catch (err) {}
+  };
+  es.onerror = () => {
+    R.linked = (performance.now() - R.lastMsg) < 4000;
+    if (!R.linked) document.getElementById("warn").classList.add("show");
+  };
+}
+connect();
+
+/* =========================================================
+ *  3D 工具：旋转 + 透视投影（单位球空间）
+ * ========================================================= */
+let view = { yaw: -0.5, pitch: 0.18, dragYaw: 0, dragPitch: 0, dragging: false, lx: 0, ly: 0 };
+function rotY(p, a) { const c0 = Math.cos(a), s0 = Math.sin(a); return { x: c0 * p.x + s0 * p.z, y: p.y, z: -s0 * p.x + c0 * p.z }; }
+function rotX(p, a) { const c0 = Math.cos(a), s0 = Math.sin(a); return { x: p.x, y: c0 * p.y - s0 * p.z, z: s0 * p.y + c0 * p.z }; }
+function rotZ(p, a) { const c0 = Math.cos(a), s0 = Math.sin(a); return { x: c0 * p.x - s0 * p.y, y: s0 * p.x + c0 * p.y, z: p.z }; }
+function toScreen(p, cx, cy, R0) {
+  // 全局视角旋转后投影
+  let q = rotY(p, view.yaw + view.dragYaw);
+  q = rotX(q, view.pitch + view.dragPitch);
+  const d = 3.4;
+  const k = d / (d + q.z);
+  return { x: cx + q.x * R0 * k, y: cy - q.y * R0 * k, z: q.z, k };
+}
+
+/* =========================================================
+ *  场景元素
+ * ========================================================= */
+// 核心球点云（斐波那契球）
+const CLOUD_N = 460;
+const cloud = [];
+{
+  const ga = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < CLOUD_N; i++) {
+    const y = 1 - (i / (CLOUD_N - 1)) * 2;
+    const r = Math.sqrt(1 - y * y);
+    const th = ga * i;
+    cloud.push({ x: Math.cos(th) * r, y, z: Math.sin(th) * r });
+  }
+}
+// 经线 / 纬线采样
+const wire = [];
+{
+  const LON = 8, LAT = [ -60, -30, 0, 30, 60 ], SEG = 40;
+  for (let l = 0; l < LON; l++) {
+    const pts = [], a0 = (l / LON) * Math.PI * 2;
+    for (let i = 0; i <= SEG; i++) {
+      const t = (i / SEG) * Math.PI * 2;
+      pts.push({ x: Math.cos(t) * Math.cos(a0), y: Math.sin(t), z: Math.cos(t) * Math.sin(a0) });
+    }
+    wire.push(pts);
+  }
+  for (const lat of LAT) {
+    const pts = [], yr = Math.sin(lat * Math.PI / 180), xr = Math.cos(lat * Math.PI / 180);
+    for (let i = 0; i <= SEG; i++) {
+      const t = (i / SEG) * Math.PI * 2;
+      pts.push({ x: Math.cos(t) * xr, y: yr, z: Math.sin(t) * xr });
+    }
+    wire.push(pts);
+  }
+}
+// 装饰弧环（贴球旋转弧，非轨道）
+function arcPts(r, a0, a1, n, rotFn) {
+  const pts = [];
+  for (let i = 0; i <= n; i++) {
+    const a = a0 + (a1 - a0) * i / n;
+    let p = { x: Math.cos(a) * r, y: 0, z: Math.sin(a) * r };
+    if (rotFn) p = rotFn(p);
+    pts.push(p);
+  }
+  return pts;
+}
+
+// 三条轨道：各自倾斜 + 半径 + 相位
+const ORBITS = {
+  codex:  { r: 1.55, incl: 0.42, azim: 0.00, phase: 0.0,  label: "CODEX" },
+  claude: { r: 1.85, incl: -0.34, azim: 2.10, phase: 2.4,  label: "CLAUDE" },
+  zcode:  { r: 2.10, incl: 0.50, azim: 4.00, phase: 4.3,  label: "ZCODE" },
+};
+const orbitPos = {};   // 各工具卫星当前角度
+for (const t of TOOLS) orbitPos[t] = ORBITS[t].phase;
+
+function orbitPoint(o, a) {
+  let p = { x: Math.cos(a) * o.r, y: 0, z: Math.sin(a) * o.r };
+  p = rotX(p, o.incl);
+  p = rotZ(p, o.azim);
+  return p;
+}
+
+// 脉冲队列
+const pulses = [];
+const emitTimers = {};
+
+const stateColor = s => s === "active" ? GOLD : (s === "running" ? CYAN : GRAY);
+const stateDim   = s => s === "active" ? 1 : (s === "running" ? 0.55 : 0.22);
+
+/* =========================================================
+ *  主循环
+ * ========================================================= */
+let sphereYaw = 0, t0 = performance.now(), lastT = t0;
+
+function frame(now) {
+  const dt = Math.min(0.05, (now - lastT) / 1000);
+  lastT = now;
+  const t = (now - t0) / 1000;
+
+  // ---- 状态更新 ----
+  let targetEnergy = 0, activeCount = 0, runCount = 0, totalCpu = 0;
+  for (const tk of TOOLS) {
+    const src = R.tools[tk], d = R.disp[tk];
+    d.level += (src.level - d.level) * Math.min(1, dt * 3.5);
+    if (src.state === "active") { targetEnergy += 0.4 + d.level * 0.6; activeCount++; }
+    if (src.state === "running") runCount++;
+    totalCpu += src.cpu || 0;
+  }
+  targetEnergy = clamp(targetEnergy, 0, 1.35);
+  R.energy += (targetEnergy - R.energy) * Math.min(1, dt * 2);
+  R.corePulse *= Math.pow(0.25, dt);
+
+  // 未连接哨兵 → 待机
+  if (!R.linked) R.energy *= Math.pow(0.3, dt);
+
+  sphereYaw += dt * (0.16 + R.energy * 0.85);
+
+  // 视角回弹 + 自动漂移
+  if (!view.dragging) {
+    view.dragYaw *= Math.pow(0.15, dt);
+    view.dragPitch *= Math.pow(0.15, dt);
+  }
+  view.yaw += dt * 0.045;
+
+  // 卫星公转 & 脉冲发射
+  for (const tk of TOOLS) {
+    const src = R.tools[tk];
+    let spd = 0;
+    if (src.state === "running") spd = 0.22;
+    else if (src.state === "active") spd = 0.55 + R.disp[tk].level * 0.9;
+    orbitPos[tk] += spd * dt;
+    // active → 按活跃度周期性发脉冲
+    if (src.state === "active") {
+      emitTimers[tk] = (emitTimers[tk] || 0) - dt;
+      const period = clamp(1.6 - R.disp[tk].level, 0.35, 1.6);
+      if (emitTimers[tk] <= 0) {
+        emitTimers[tk] = period;
+        const o = ORBITS[tk];
+        pulses.push({ from: orbitPoint(o, orbitPos[tk]), t: tk, p: 0, speed: 1.5 + Math.random() * 0.5 });
+        if (pulses.length > 40) pulses.shift();
+      }
+    }
+  }
+  // 脉冲推进
+  for (const p of pulses) p.p += p.speed * dt;
+  for (let i = pulses.length - 1; i >= 0; i--) {
+    if (pulses[i].p >= 1) {
+      R.corePulse = Math.min(1, R.corePulse + 0.3);
+      pulses.splice(i, 1);
+    }
+  }
+
+  render(t);
+  requestAnimationFrame(frame);
+}
+
+/* =========================================================
+ *  渲染
+ * ========================================================= */
+function glow(rgb, blur) { ctx.shadowColor = c(rgb, 0.9); ctx.shadowBlur = blur; }
+function noGlow() { ctx.shadowBlur = 0; }
+
+function render(t) {
+  ctx.clearRect(0, 0, W, H);
+  const cx = W * (W > 900 ? 0.52 : 0.5), cy = H * 0.5;
+  const R0 = Math.min(W, H) * 0.146;
+  const E = clamp(R.energy, 0, 1);
+  const coreRGB = E > 0.65 ? GOLD : CYAN;
+
+  // ---- 核心光晕 ----
+  const gr = R0 * (2.1 + R.corePulse * 0.9);
+  const g = ctx.createRadialGradient(cx, cy, R0 * 0.2, cx, cy, gr);
+  g.addColorStop(0, c(coreRGB, 0.16 + E * 0.1 + R.corePulse * 0.14));
+  g.addColorStop(0.55, c(coreRGB, 0.05 + E * 0.05));
+  g.addColorStop(1, c(coreRGB, 0));
+  ctx.fillStyle = g;
+  ctx.fillRect(cx - gr, cy - gr, gr * 2, gr * 2);
+
+  // ---- 球心能量核 ----
+  const breathe = 0.75 + 0.25 * Math.sin(t * (1.5 + E * 2.5));
+  glow(coreRGB, 22 + R.corePulse * 30);
+  ctx.fillStyle = c(coreRGB, 0.5 + E * 0.3);
+  ctx.beginPath();
+  ctx.arc(cx, cy, R0 * (0.12 + R.corePulse * 0.05) * breathe * 3.2, 0, Math.PI * 2);
+  ctx.fill();
+  noGlow();
+
+  // ---- 点云 ----
+  ctx.fillStyle = c(coreRGB, 1);
+  for (const p of cloud) {
+    const q = rotY(p, sphereYaw);
+    const s = toScreen(q, cx, cy, R0);
+    const front = s.z < 0;
+    const a = (front ? 0.75 : 0.16) * (0.35 + E * 0.65);
+    ctx.globalAlpha = a;
+    const sz = (front ? 1.5 : 1) * U * s.k;
+    ctx.fillRect(s.x - sz / 2, s.y - sz / 2, sz, sz);
+  }
+  ctx.globalAlpha = 1;
+
+  // ---- 经纬线 ----
+  ctx.lineWidth = 1;
+  for (const line of wire) {
+    let prev = null;
+    for (const p of line) {
+      const q = rotY(p, sphereYaw);
+      const s = toScreen(q, cx, cy, R0);
+      if (prev && (prev.z < 0.15 || s.z < 0.15)) {
+        const a = (s.z < 0 ? 0.35 : 0.09) * (0.3 + E * 0.7);
+        ctx.strokeStyle = c(coreRGB, a);
+        ctx.beginPath();
+        ctx.moveTo(prev.x, prev.y);
+        ctx.lineTo(s.x, s.y);
+        ctx.stroke();
+      }
+      prev = s;
+    }
+  }
+
+  // ---- 贴球装饰弧（两条反向旋转）----
+  const drawArc = (pts, rgb, a, lw) => {
+    let prev = null;
+    ctx.strokeStyle = c(rgb, a);
+    ctx.lineWidth = lw;
+    for (const p of pts) {
+      const s = toScreen(p, cx, cy, R0);
+      if (prev) {
+        ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(s.x, s.y); ctx.stroke();
+      }
+      prev = s;
+    }
+  };
+  const arcTilt = p => rotX(rotZ(p, 0.35), 0.3);
+  drawArc(arcPts(1.14, sphereYaw * 1.6, sphereYaw * 1.6 + 2.1, 26, arcTilt), CYAN, 0.5 + E * 0.3, 1.6 * U);
+  drawArc(arcPts(1.2, -sphereYaw * 1.1 + 2, -sphereYaw * 1.1 + 3.4, 26, arcTilt), GOLD, 0.35 + E * 0.3, 1.2 * U);
+
+  // ---- 三条轨道 + 卫星 ----
+  for (const tk of TOOLS) {
+    const o = ORBITS[tk], src = R.tools[tk], dim = stateDim(src.state), rgb = stateColor(src.state);
+    const lvl = R.disp[tk].level;
+
+    // 轨道线（双圈：主轨 + 细外轨）
+    let prev = null;
+    for (let i = 0; i <= 72; i++) {
+      const s = toScreen(orbitPoint(o, (i / 72) * Math.PI * 2), cx, cy, R0);
+      if (prev) {
+        ctx.strokeStyle = c(rgb, dim * (0.22 + lvl * 0.3));
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(prev.x, prev.y); ctx.lineTo(s.x, s.y); ctx.stroke();
+      }
+      prev = s;
+    }
+
+    // active 时的轨道粒子流（卫星尾迹）
+    if (src.state === "active") {
+      for (let i = 1; i <= 8; i++) {
+        const a = orbitPos[tk] - i * 0.09;
+        const s = toScreen(orbitPoint(o, a), cx, cy, R0);
+        ctx.fillStyle = c(GOLD, (1 - i / 9) * 0.7);
+        const sz = 2.2 * U * (1 - i / 10) + 0.6;
+        ctx.fillRect(s.x - sz / 2, s.y - sz / 2, sz, sz);
+      }
+    }
+
+    // 卫星
+    const s = toScreen(orbitPoint(o, orbitPos[tk]), cx, cy, R0);
+    const satR = (4.5 + lvl * 2.5) * U * s.k;
+    if (src.state !== "offline" && src.state !== "absent") {
+      glow(rgb, 12 + lvl * 16);
+      ctx.fillStyle = c(rgb, 0.9);
+      ctx.beginPath(); ctx.arc(s.x, s.y, satR, 0, Math.PI * 2); ctx.fill();
+      noGlow();
+      // 卫星外圈
+      ctx.strokeStyle = c(rgb, 0.6);
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(s.x, s.y, satR + 4 * U, 0, Math.PI * 2); ctx.stroke();
+    } else {
+      // 熄灭态：暗色实心点 + 虚线圈，保持"存在但休眠"的可见性
+      ctx.fillStyle = c(GRAY, 0.4);
+      ctx.beginPath(); ctx.arc(s.x, s.y, 2.5 * U, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = c(GRAY, 0.4);
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3 * U, 4 * U]);
+      ctx.beginPath(); ctx.arc(s.x, s.y, 5.5 * U, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    // 标签
+    ctx.font = `${9.5 * U}px ui-monospace, Menlo, monospace`;
+    ctx.textAlign = "center";
+    ctx.fillStyle = c(rgb, 0.9);
+    ctx.fillText(o.label, s.x, s.y - satR - 9 * U);
+  }
+
+  // ---- 脉冲（卫星 → 核心）----
+  for (const p of pulses) {
+    const dir = Math.hypot(p.from.x, p.from.y, p.from.z) || 1;
+    const target = { x: p.from.x / dir * 0.92, y: p.from.y / dir * 0.92, z: p.from.z / dir * 0.92 };
+    const ease = p.p * p.p * (3 - 2 * p.p);
+    const pos = {
+      x: p.from.x + (target.x - p.from.x) * ease,
+      y: p.from.y + (target.y - p.from.y) * ease,
+      z: p.from.z + (target.z - p.from.z) * ease,
+    };
+    const s = toScreen(pos, cx, cy, R0);
+    const a = Math.sin(Math.PI * Math.min(1, p.p)) * 0.9;
+    glow(GOLD, 14);
+    ctx.fillStyle = c(GOLD, a);
+    ctx.beginPath(); ctx.arc(s.x, s.y, 2.6 * U * s.k, 0, Math.PI * 2); ctx.fill();
+    noGlow();
+  }
+}
+
+/* =========================================================
+ *  拖拽交互
+ * ========================================================= */
+cv.addEventListener("pointerdown", e => {
+  view.dragging = true; view.lx = e.clientX; view.ly = e.clientY;
+  cv.classList.add("dragging");
+  cv.setPointerCapture(e.pointerId);
+});
+cv.addEventListener("pointermove", e => {
+  if (!view.dragging) return;
+  view.dragYaw += (e.clientX - view.lx) * 0.006;
+  view.dragPitch += (e.clientY - view.ly) * 0.005;
+  view.dragPitch = clamp(view.dragPitch, -1.1, 1.1);
+  view.lx = e.clientX; view.ly = e.clientY;
+});
+const endDrag = () => { view.dragging = false; cv.classList.remove("dragging"); };
+cv.addEventListener("pointerup", endDrag);
+cv.addEventListener("pointercancel", endDrag);
+
+/* =========================================================
+ *  DOM 面板刷新（500ms）
+ * ========================================================= */
+function relTime(ts) {
+  if (!ts) return "—";
+  const s = Math.max(0, (Date.now() / 1000 - ts));
+  if (s < 60) return Math.round(s) + "s AGO";
+  if (s < 3600) return Math.round(s / 60) + "m AGO";
+  return Math.round(s / 3600) + "h AGO";
+}
+const badgeText = s => s === "active" ? "ACTIVE" : s === "running" ? "RUNNING"
+  : s === "absent" ? "N/A" : "OFFLINE";
+
+setInterval(() => {
+  let active = 0, running = 0, cpu = 0, energy = 0;
+  for (const tk of TOOLS) {
+    const src = R.tools[tk], card = document.getElementById("card-" + tk);
+    card.dataset.state = src.state;
+    card.querySelector(".badge").textContent = badgeText(src.state);
+    card.querySelector(".v-proc").textContent = src.procs || 0;
+    card.querySelector(".v-cpu").textContent = (src.cpu || 0).toFixed(1) + "%";
+    card.querySelector(".v-last").textContent = src.state === "active" ? "NOW" : relTime(src.lastActive);
+    card.querySelector(".v-ev").textContent = src.events || 0;
+    card.querySelector(".lv i").style.width = Math.round(R.disp[tk].level * 100) + "%";
+    if (src.state === "active") active++;
+    if (src.state === "running") running++;
+    cpu += src.cpu || 0;
+    energy += R.disp[tk].level;
+  }
+  document.getElementById("s-active").textContent = active;
+  document.getElementById("s-running").textContent = running;
+  document.getElementById("s-cpu").textContent = cpu.toFixed(1) + "%";
+  document.getElementById("s-energy").textContent = Math.round(clamp(energy, 0, 1) * 100) + "%";
+  document.getElementById("s-link").textContent = R.linked ? "ONLINE" : "OFFLINE";
+
+  // sparkline / 总波形历史
+  for (const tk of TOOLS) {
+    R.sparks[tk].push(R.disp[tk].level);
+    if (R.sparks[tk].length > 60) R.sparks[tk].shift();
+    drawSpark(document.querySelector("#card-" + tk + " canvas.spark"), R.sparks[tk]);
+  }
+  const agg = clamp(TOOLS.reduce((s, k) => s + R.disp[k].level, 0), 0, 1);
+  R.agg.push(agg);
+  if (R.agg.length > 160) R.agg.shift();
+  drawWave();
+  document.getElementById("wave-info").textContent =
+    R.linked ? `${Math.round(agg * 100)}% LOAD — ${TOOLS.filter(k => R.tools[k].state === "active").length} AGENT(S) ENGAGED` : "NO DATA";
+}, 500);
+
+function drawSpark(canvasEl, data) {
+  const g = canvasEl.getContext("2d");
+  const w = canvasEl.width, h = canvasEl.height;
+  g.clearRect(0, 0, w, h);
+  if (data.length < 2) return;
+  const last = data[data.length - 1];
+  const rgb = last > 0.08 ? GOLD : CYAN;
+  g.strokeStyle = c(rgb, 0.85);
+  g.lineWidth = 1.2;
+  g.beginPath();
+  data.forEach((v, i) => {
+    const x = i / (data.length - 1) * (w - 2) + 1;
+    const y = h - 2 - v * (h - 5);
+    i === 0 ? g.moveTo(x, y) : g.lineTo(x, y);
+  });
+  g.stroke();
+  // 渐变填充
+  g.lineTo(w - 1, h); g.lineTo(1, h); g.closePath();
+  const grad = g.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, c(rgb, 0.25)); grad.addColorStop(1, c(rgb, 0));
+  g.fillStyle = grad; g.fill();
+}
+function drawWave() {
+  const el = document.getElementById("wave");
+  const g = el.getContext("2d");
+  const w = el.width, h = el.height;
+  g.clearRect(0, 0, w, h);
+  // 网格
+  g.strokeStyle = c(CYAN, 0.1);
+  g.lineWidth = 1;
+  for (let i = 1; i < 4; i++) {
+    g.beginPath(); g.moveTo(0, h * i / 4); g.lineTo(w, h * i / 4); g.stroke();
+  }
+  if (R.agg.length < 2) return;
+  const peak = Math.max(0.15, ...R.agg);
+  g.strokeStyle = c(GOLD, 0.9);
+  g.lineWidth = 1.6;
+  g.shadowColor = c(GOLD, 0.7); g.shadowBlur = 6;
+  g.beginPath();
+  R.agg.forEach((v, i) => {
+    const x = i / (R.agg.length - 1) * (w - 2) + 1;
+    const y = h - 3 - (v / peak) * (h - 8);
+    i === 0 ? g.moveTo(x, y) : g.lineTo(x, y);
+  });
+  g.stroke();
+  g.shadowBlur = 0;
+}
+
+/* ---------------- 时钟 ---------------- */
+setInterval(() => {
+  const n = new Date();
+  const p = v => String(v).padStart(2, "0");
+  document.querySelector("#clock .time").textContent = `${p(n.getHours())}:${p(n.getMinutes())}:${p(n.getSeconds())}`;
+  const days = ["SUN","MON","TUE","WED","THU","FRI","SAT"];
+  document.querySelector("#clock .date").textContent =
+    `${n.getFullYear()}.${p(n.getMonth()+1)}.${p(n.getDate())} ${days[n.getDay()]}`;
+}, 500);
+
+/* =========================================================
+ *  开机动画
+ * ========================================================= */
+(function boot() {
+  const logEl = document.getElementById("boot-log");
+  const barEl = document.querySelector("#boot-bar i");
+  const bootEl = document.getElementById("boot");
+  const lines = [
+    ["J.A.R.V.I.S. SENTINEL  v1.0  —  AGENT WATCH PROTOCOL", 0],
+    ["", 0],
+    ["SCANNING AGENT RUNTIMES ........... <ok>3 FOUND</ok>", 8],
+    ["  CODEX RUNTIME ................... <ok>LINKED</ok>", 24],
+    ["  CLAUDE CODE RUNTIME ............. <ok>LINKED</ok>", 40],
+    ["  ZCODE RUNTIME ................... <ok>LINKED</ok>", 56],
+    ["SENTINEL DAEMON ................... <ok>ARMED</ok>", 72],
+    ["HOLOGRAPHIC CORE .................. <ok>ONLINE</ok>", 86],
+    ["", 0],
+    ["ALL SYSTEMS NOMINAL. WATCHING YOUR AGENTS, SIR.", 96],
+  ];
+  const plain = s => s.replace(/<\/?ok>/g, "");
+  let li = 0, ci = 0, target = 0;
+  function step() {
+    if (li >= lines.length) {
+      setTimeout(() => {
+        barEl.style.width = "100%";
+        bootEl.classList.add("done");
+        setTimeout(() => bootEl.remove(), 1000);
+      }, 600);
+      return;
+    }
+    const [full, pct] = lines[li];
+    ci++;
+    if (ci % 2 === 0 || li === 0) {
+      const done = lines.slice(0, li).map(([s]) => s.includes("<ok>")
+        ? s.replace("<ok>", '<span class="ok">').replace("</ok>", "</span>") : s).join("\n");
+      logEl.innerHTML = done + (li < lines.length ? plain(full.slice(0, ci)) : "");
+    }
+    target = Math.max(target, pct);
+    barEl.style.width = target + "%";
+    if (ci >= full.length) { li++; ci = 0; setTimeout(step, 100); }
+    else setTimeout(step, li === 0 ? 24 : 7);
+  }
+  setTimeout(step, 300);
+})();
+
+resize();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
