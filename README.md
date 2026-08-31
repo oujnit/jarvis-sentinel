@@ -17,8 +17,13 @@ jarvis/
   - **ACTIVE** — 正在干活，金色高能加速 + 轨道粒子流 + 数据脉冲飞向核心
 - 📊 **状态面板**：每工具状态卡（状态徽章、进程数、CPU%、最近活动、活跃度迷你波形）+ 系统总览（活跃数、总 CPU、核心能量、链路状态）
 - 📈 **总神经负载波形**：过去 80 秒三个工具合计活跃度实时折线
+- 🌡️ **SYSTEM & QUOTA 遥测卡**（数据源参照 [kindle-ai-quota-dashboard](https://github.com/softmutiny/kindle-ai-quota-dashboard)）：
+  - 本机系统：电池电量/充电状态、CPU 负载、内存、磁盘（`pmset`/`vm_stat`/`os.getloadavg`）
+  - **Codex 额度重置**：最近一次重置时间、重置次数、平均间隔（codex-resets.com 公共 API，免密钥）
+  - **天气**：实时温度与天气描述（Open-Meteo，免密钥；默认深圳，可用 `JARVIS_LAT`/`JARVIS_LON` 改）
+  - **DeepSeek / GLM 余额**：自动读本机凭证（见下文），未配置则显示 `—`
 - 🚀 **J.A.R.V.I.S. 开机自检动画** + 全屏扫描线特效
-- 🔒 **纯本地**：检测数据仅在本机 127.0.0.1 上流转，不向任何外部发送
+- 🔒 **纯本地**：检测数据仅在本机 127.0.0.1 上流转，不向任何外部发送（除免密钥的公共天气/重置接口外）
 
 ## 🚀 快速开始
 
@@ -65,6 +70,16 @@ TOOLS = {
 ```
 
 页面端在 `jarvis.html` 的 `TOOLS` 数组和 `ORBITS` 字典里加上对应的 key 与轨道参数（半径、倾斜角、相位、标签）即可。
+
+## 💳 额度凭证（可选）
+
+DeepSeek/GLM 余额读取凭证的顺序：
+
+1. 环境变量 `DEEPSEEK_API_KEY` / `GLM_API_KEY`
+2. `~/.jarvis/credentials.json`：`{"deepseek": "sk-...", "glm": "..."}`
+3. 本机已有的凭证文件（自动兼容）：`kindle-ai-quota-dashboard/config/deepseek.key` 与 `~/.opencodex/config.json` 里的 `providers.zai.apiKey`
+
+凭证只在本机哨兵进程内使用，不会写入仓库或页面。
 
 ## 🌐 兼容性
 

@@ -11,10 +11,13 @@ JARVIS Sentinel — 本地 AI 编码代理活动哨兵
 import json
 import os
 import re
+import shutil
+import ssl
 import subprocess
 import sys
 import threading
 import time
+import urllib.request
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -86,7 +89,202 @@ STATE = {
             "level": 0.0, "lastActive": 0, "events": 0}
         for k, c in TOOLS.items()
     },
+    "sys": {},      # 本机系统：电池/内存/负载/磁盘
+    "resets": {},   # Codex 额度重置（codex-resets.com，公共 API）
+    "weather": {},  # 天气（Open-Meteo，免密钥）
+    "quota": {},    # AI 平台额度（DeepSeek/GLM，读本机凭证，未配置则报错说明）
 }
+
+# ---------------- 遥测采集（参考 kindle-ai-quota-dashboard 的数据源） ----------------
+
+def open_json(url, headers=None, timeout=10, context=None):
+    """urllib 拉 JSON；默认校验证书，缺根证书环境自动回退非校验（本地展示用途）。"""
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "jarvis-sentinel/1.0",
+        "Accept": "application/json",
+        **(headers or {}),
+    })
+    try:
+        if context is None:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read().decode("utf-8", "replace"))
+    except urllib.error.URLError as e:
+        if not isinstance(getattr(e, "reason", None), ssl.SSLCertVerificationError):
+            raise
+    ctx = context or ssl._create_unverified_context()
+    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+        return json.loads(r.read().decode("utf-8", "replace"))
+
+
+def read_cred(env_names, file_keys):
+    """凭证级联：环境变量 → ~/.jarvis/credentials.json → 参考项目的本机凭证文件。"""
+    for name in env_names:
+        v = os.environ.get(name)
+        if v:
+            return v.strip()
+    try:
+        with (HOME / ".jarvis" / "credentials.json").open() as f:
+            data = json.load(f)
+        for k in file_keys:
+            if data.get(k):
+                return str(data.get(k))
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def read_battery():
+    try:
+        out = subprocess.run(["pmset", "-g", "batt"], capture_output=True,
+                             text=True, timeout=3).stdout
+    except Exception:
+        return None
+    m = re.search(r"(\d+)%", out)
+    if not m:
+        return None
+    charging = "charging" in out or "charged" in out
+    return {"pct": int(m.group(1)), "charging": charging}
+
+
+def read_mem():
+    try:
+        total = int(subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True,
+                                   text=True, timeout=3).stdout.strip())
+        out = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=3).stdout
+    except Exception:
+        return None
+    pg = 4096
+    m = re.search(r"page size of (\d+)", out)
+    if m:
+        pg = int(m.group(1))
+    vals = {}
+    for line in out.splitlines():
+        mm = re.match(r"(.+?):\s+(\d+)", line.strip())
+        if mm:
+            vals[mm.group(1)] = int(mm.group(2))
+    used = (vals.get("Pages active", 0) + vals.get("Pages wired down", 0)
+            + vals.get("Pages occupied by compressor", 0)) * pg
+    return {"used_gb": round(used / 1e9, 1), "total_gb": round(total / 1e9, 1)}
+
+
+def read_disk():
+    try:
+        u = shutil.disk_usage("/")
+        return {"free_gb": round(u.free / 1e9, 0), "total_gb": round(u.total / 1e9, 0)}
+    except Exception:
+        return None
+
+
+WMO = [
+    ((0,), "晴"), ((1,), "基本晴"), ((2,), "多云"), ((3,), "阴"),
+    ((45, 48), "雾"), ((51, 53, 55, 56, 57), "毛毛雨"), ((61, 63, 65, 66, 67), "雨"),
+    ((71, 73, 75, 77, 85, 86), "雪"), ((80, 81, 82), "阵雨"), ((95, 96, 99), "雷阵雨"),
+]
+
+
+def fetch_weather():
+    lat = os.environ.get("JARVIS_LAT", "22.5455")    # 默认深圳（参考 kindle 项目）
+    lon = os.environ.get("JARVIS_LON", "114.0683")
+    url = ("https://api.open-meteo.com/v1/forecast?latitude=" + lat + "&longitude=" + lon
+           + "&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code"
+           + "&timezone=Asia%2FShanghai")
+    try:
+        d = open_json(url, timeout=10)
+        cur = d.get("current") or {}
+        code = int(cur.get("weather_code") or 0)
+        text = "天气"
+        for codes, txt in WMO:
+            if code in codes:
+                text = txt
+                break
+        return {"ok": True, "temp": cur.get("temperature_2m"),
+                "feels": cur.get("apparent_temperature"),
+                "humidity": cur.get("relative_humidity_2m"), "text": text}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:80]}
+
+
+def fetch_resets():
+    try:
+        d = open_json("https://codex-resets.com/api/v1/status", timeout=12)
+        data = d.get("data") or {}
+        latest = (data.get("latest_reset") or {}).get("announced_at")
+        stats = data.get("stats") or {}
+        return {"ok": True,
+                "last": latest or stats.get("last_reset_at"),
+                "total": stats.get("total"),
+                "days_since": stats.get("days_since_last"),
+                "avg_days": stats.get("avg_interval_days")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:80]}
+
+
+def fetch_deepseek():
+    key = read_cred(["DEEPSEEK_API_KEY"], ["deepseek"])
+    # 兜底：kindle-ai-quota-dashboard 的本机密钥文件
+    if not key:
+        try:
+            key = (Path(os.environ.get("HOME", "~")) /
+                   "Project/kindle-ai-quota-dashboard/config/deepseek.key").read_text().strip()
+        except OSError:
+            pass
+    if not key:
+        return {"ok": False, "error": "NO KEY"}
+    try:
+        d = open_json("https://api.deepseek.com/user/balance",
+                      headers={"Authorization": "Bearer " + key}, timeout=10)
+        rows = d.get("balance_infos") or []
+        if not rows:
+            return {"ok": False, "error": "empty"}
+        row = rows[0]
+        return {"ok": True, "balance": float(row.get("total_balance") or 0),
+                "currency": row.get("currency") or "CNY"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:80]}
+
+
+def fetch_glm():
+    key = read_cred(["GLM_API_KEY"], ["glm"])
+    if not key:
+        # 兜底：opencodex 配置里的 zai 密钥（与参考项目一致）
+        try:
+            cfg = json.loads((HOME / ".opencodex" / "config.json").read_text())
+            key = ((cfg.get("providers", {}).get("zai") or {}).get("apiKey") or "")
+        except (OSError, ValueError):
+            pass
+    if not key:
+        return {"ok": False, "error": "NO KEY"}
+    try:
+        d = open_json("https://open.bigmodel.cn/api/monitor/usage/quota/limit",
+                      headers={"Authorization": "Bearer " + key}, timeout=10)
+        limits = [(x.get("nextResetTime") or 0, x) for x
+                  in (((d.get("data") or {}).get("limits")) or [])
+                  if x.get("type") == "CREDIT_LIMIT"]
+        limits.sort(key=lambda p: p[0])
+        wins = [{"usedPct": int(item.get("percentage") or 0),
+                 "resetAt": int(item.get("nextResetTime") or 0)}
+                for _, item in limits[:3]]
+        return {"ok": True, "windows": wins}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:80]}
+
+
+def telemetry(interval=60):
+    """独立的遥测线程：系统数据 + 外部数据，每 60s 刷新一次。"""
+    while True:
+        low = {"battery": read_battery(), "mem": read_mem(),
+               "disk": read_disk(), "load": list(os.getloadavg())}
+        with LOCK:
+            STATE["sys"] = low
+        resets = {"_wrap": fetch_resets()}
+        ws = fetch_weather()
+        ds = fetch_deepseek()
+        glm = fetch_glm()
+        with LOCK:
+            STATE["resets"] = resets["_wrap"]
+            STATE["weather"] = ws
+            STATE["quota"] = {"deepseek": ds, "glm": glm}
+        time.sleep(interval)
 
 
 def scan_processes():
@@ -219,6 +417,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     threading.Thread(target=collector, daemon=True).start()
+    threading.Thread(target=telemetry, daemon=True).start()
     if "--no-open" not in sys.argv:
         threading.Timer(1.2, lambda: webbrowser.open(f"http://127.0.0.1:{PORT}")).start()
     print(f"JARVIS sentinel listening → http://127.0.0.1:{PORT}  (Ctrl+C 退出)")

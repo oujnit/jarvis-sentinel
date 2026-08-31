@@ -182,6 +182,14 @@
   #summary .row b { font-weight: normal; color: var(--cyan); font-size: 11px; }
   #summary .row b.gold { color: var(--gold); text-shadow: 0 0 8px rgba(255,210,122,0.6); }
 
+  /* ---------- 系统遥测卡（右侧，SUMMARY 下方） ---------- */
+  #extras {
+    position: fixed; right: 30px; top: 400px;
+    z-index: 10;
+    width: 220px;
+  }
+  #extras .card { width: 100%; }
+
   /* ---------- 底部波形 ---------- */
   footer {
     position: fixed; left: 50%; bottom: 26px;
@@ -251,7 +259,7 @@
 
   @media (max-width: 900px) {
     #cards { width: 190px; left: 16px; top: 110px; gap: 12px; }
-    #summary { display: none; }
+    #summary, #extras { display: none; }
     footer { width: 80vw; }
   }
 </style>
@@ -299,6 +307,17 @@
     <canvas class="spark"></canvas>
   </div>
 </aside>
+
+<div id="extras">
+  <div class="card" id="card-sys" data-state="running">
+    <div class="head"><span class="name">SYSTEM & QUOTA</span><span class="badge">LIVE</span></div>
+    <div class="rows"><span>BATTERY <b id="sys-batt">—</b></span><span>CPU LOAD <b id="sys-load">—</b></span></div>
+    <div class="rows"><span>MEMORY <b id="sys-mem">—</b></span><span>DISK <b id="sys-disk">—</b></span></div>
+    <div class="rows"><span>WEATHER <b id="sys-wx">—</b></span><span></span></div>
+    <div class="rows"><span>CODEX RESET <b id="sys-cr">—</b></span><span></span></div>
+    <div class="rows"><span>DEEPSEEK <b id="sys-ds">—</b></span><span>GLM <b id="sys-glm">—</b></span></div>
+  </div>
+</div>
 
 <div id="summary">
   <h3>SYSTEM SUMMARY</h3>
@@ -363,6 +382,7 @@ const R = {
   sparks: {},         // 每工具 sparkline 历史
   agg: [],            // 总波形历史
   energy: 0, corePulse: 0,
+  sys: {}, resets: {}, weather: {}, quota: {},   // 遥测数据
 };
 for (const t of TOOLS) {
   R.tools[t] = { state: "offline", level: 0, procs: 0, cpu: 0, lastActive: 0, events: 0, installed: true };
@@ -384,6 +404,10 @@ function connect() {
       for (const t of TOOLS) {
         if (d.tools && d.tools[t]) R.tools[t] = { ...R.tools[t], ...d.tools[t] };
       }
+      if (d.sys) R.sys = d.sys;
+      if (d.resets) R.resets = d.resets;
+      if (d.weather) R.weather = d.weather;
+      if (d.quota) R.quota = d.quota;
       if (!wasLinked) document.getElementById("warn").classList.remove("show");
     } catch (err) {}
   };
@@ -1003,6 +1027,31 @@ setInterval(() => {
   document.getElementById("s-cpu").textContent = cpu.toFixed(1) + "%";
   document.getElementById("s-energy").textContent = Math.round(clamp(energy, 0, 1) * 100) + "%";
   document.getElementById("s-link").textContent = R.linked ? "ONLINE" : "OFFLINE";
+
+  // ---- SYSTEM & QUOTA 卡 ----
+  const sysB = (id, v) => { document.getElementById(id).textContent = v; };
+  const sp = R.sys || {};
+  sysB("sys-batt", sp.battery && sp.battery.pct != null
+    ? `${sp.battery.pct}%${sp.battery.charging ? " ⚡" : ""}` : "—");
+  sysB("sys-load", sp.load ? sp.load[0].toFixed(2) : "—");
+  sysB("sys-mem", sp.mem && sp.mem.total_gb ? `${sp.mem.used_gb}/${sp.mem.total_gb}G` : "—");
+  sysB("sys-disk", sp.disk && sp.disk.total_gb ? `${sp.disk.free_gb}/${sp.disk.total_gb}G` : "—");
+  const wx = R.weather || {};
+  sysB("sys-wx", wx.ok ? `${Math.round(wx.temp)}° ${wx.text}` : "—");
+  const rs = R.resets || {};
+  if (rs.ok && rs.last) {
+    const days = (Date.now() - Date.parse(rs.last)) / 86400e3;
+    const ago = days >= 1 ? days.toFixed(1) + "d" : (days * 24).toFixed(1) + "h";
+    sysB("sys-cr", rs.total != null ? `${ago}·${rs.total}x` : ago + " AGO");
+  } else sysB("sys-cr", "—");
+  const q = R.quota || {};
+  const dsq = q.deepseek || {};
+  sysB("sys-ds", dsq.ok ? (dsq.currency === "CNY" ? "¥" : "$") + dsq.balance.toFixed(2) : "—");
+  const w0 = (q.glm && q.glm.ok && q.glm.windows && q.glm.windows.length) ? q.glm.windows[0] : null;
+  if (w0) {
+    const hrs = Math.max(0, (w0.resetAt - Date.now()) / 36e5);
+    sysB("sys-glm", `${w0.usedPct}%${hrs < 48 ? "·" + hrs.toFixed(1) + "h" : ""}`);
+  } else sysB("sys-glm", "—");
 
   // sparkline / 总波形历史
   for (const tk of TOOLS) {
