@@ -280,10 +280,13 @@ def fetch_glm():
                   in (((d.get("data") or {}).get("limits")) or [])
                   if x.get("type") == "CREDIT_LIMIT"]
         limits.sort(key=lambda p: p[0])
-        wins = [{"usedPct": int(item.get("percentage") or 0),
+        # GLM 按重置先后对应：5小时额度 与 周额度（参考项目同名约定）
+        names = ["5小时", "周"]
+        wins = [{"name": names[i] if i < len(names) else f"窗口{i + 1}",
+                 "usedPct": int(item.get("percentage") or 0),
                  "resetAt": int(item.get("nextResetTime") or 0),
                  "remaining": item.get("remaining")}
-                for _, item in limits[:3]]
+                for i, (_, item) in enumerate(limits[:3])]
         return {"ok": True, "windows": wins}
     except Exception as e:
         return {"ok": False, "error": str(e)[:80]}

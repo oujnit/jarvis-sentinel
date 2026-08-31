@@ -1053,10 +1053,8 @@ function renderQuotaBars(q) {
     const p = q[key];
     if (!p || !p.ok || !p.windows || !p.windows.length) continue;
     p.windows.forEach((w, i) => {
-      const nm = key === "codex" && w.name ? " " + w.name : "";
-      const idx = w.name ? "" : " 窗口" + (i + 1);
       windows.push({
-        label: `${PR[key]}${nm}${idx}`,
+        label: w.name ? `${PR[key]} ${w.name}` : `${PR[key]} 窗口${i + 1}`,
         usedPct: clamp(w.usedPct, 0, 100),
         resetAt: w.resetAt || 0,
       });
